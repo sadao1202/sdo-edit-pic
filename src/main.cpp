@@ -28,6 +28,31 @@ void ReportFatalError(const wchar_t* message) {
 #endif
 }
 
+#ifdef _WIN32
+// OS標準搭載フォントを優先順に探し、日本語グリフ付きで読み込む。
+// いずれも見つからない場合は何もせず、デフォルトフォントのまま続行する。
+void LoadJapaneseFont(ImGuiIO& io) {
+    static const wchar_t* kCandidates[] = {
+        L"C:\\Windows\\Fonts\\YuGothM.ttc",
+        L"C:\\Windows\\Fonts\\meiryo.ttc",
+        L"C:\\Windows\\Fonts\\msgothic.ttc",
+    };
+
+    for (const wchar_t* candidate : kCandidates) {
+        if (GetFileAttributesW(candidate) == INVALID_FILE_ATTRIBUTES) {
+            continue;
+        }
+
+        char utf8Path[MAX_PATH * 4] = {};
+        WideCharToMultiByte(CP_UTF8, 0, candidate, -1, utf8Path, sizeof(utf8Path), nullptr, nullptr);
+
+        ImFontConfig config;
+        io.Fonts->AddFontFromFileTTF(utf8Path, 20.0f, &config, io.Fonts->GetGlyphRangesJapanese());
+        return;
+    }
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -44,7 +69,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
 
-    GLFWwindow* window = glfwCreateWindow(1280, 800, "sdo-edit-pic", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(900, 650, "sdo-edit-pic", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "ウィンドウの作成に失敗しました。\n");
         ReportFatalError(L"ウィンドウの作成に失敗しました。");
@@ -67,6 +92,10 @@ int main() {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     (void)io;
+
+#ifdef _WIN32
+    LoadJapaneseFont(io);
+#endif
 
     ImGui::StyleColorsDark();
 

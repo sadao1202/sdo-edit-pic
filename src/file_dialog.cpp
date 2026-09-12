@@ -30,22 +30,4 @@ std::optional<std::wstring> OpenFileDialog() {
     return std::wstring(fileBuffer);
 }
 
-std::optional<std::wstring> SaveFileDialog() {
-    wchar_t fileBuffer[MAX_PATH] = L"";
-
-    OPENFILENAMEW ofn = {};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = kFilter;
-    ofn.lpstrFile = fileBuffer;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    ofn.lpstrDefExt = L"png";
-
-    if (!GetSaveFileNameW(&ofn)) {
-        return std::nullopt;
-    }
-    return std::wstring(fileBuffer);
-}
-
 }  // namespace file_dialog

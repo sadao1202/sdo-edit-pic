@@ -13,10 +13,11 @@ public:
 
 private:
     void OnOpenClicked();
-    void OnSaveAsClicked();
+    void OnConvertClicked();
 
     std::optional<ImageDocument> document_;
     GLTexture texture_;
+    std::wstring selectedPath_;
 
     int jpegQuality_ = 90;
     std::string statusMessage_;

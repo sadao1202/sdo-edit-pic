@@ -68,6 +68,8 @@ add_executable(sdo_edit_pic ${APP_WIN32_FLAG}
   src/file_dialog.cpp
 )
 
+set_target_properties(sdo_edit_pic PROPERTIES OUTPUT_NAME "画像編集")
+
 target_include_directories(sdo_edit_pic PRIVATE
   third_party/stb
 )
