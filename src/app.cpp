@@ -88,6 +88,13 @@ std::string WStringToUtf8(const std::wstring& text) {
 
 }  // namespace
 
+void App::ResetImageDisplayCache() {
+    lastImageScreenPos_ = ImVec2();
+    lastDisplaySize_ = ImVec2();
+    dragStartImagePx_ = ImVec2();
+    dragCurrentImagePx_ = ImVec2();
+}
+
 void App::OnOpenClicked() {
     auto path = file_dialog::OpenFileDialog();
     if (!path.has_value()) {
@@ -105,11 +112,16 @@ void App::OnOpenClicked() {
     document_ = std::move(doc);
     selectedPath_ = *path;
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
+    // 念のため、残っているクロッププレビュー状態をクリアしておく
+    // （通常はIdle時のみ画像を開けるため発生しないはず）。
+    previewDocument_.reset();
+    previewTexture_.Release();
+    hasPendingSelection_ = false;
+    mode_ = Mode::Idle;
     statusMessage_.clear();
     statusIsError_ = false;
     // 新しい画像に切り替わったため、前の画像の表示位置・サイズのキャッシュは無効化する。
-    lastImageScreenPos_ = ImVec2();
-    lastDisplaySize_ = ImVec2();
+    ResetImageDisplayCache();
 }
 
 void App::OnConvertClicked() {
@@ -151,7 +163,7 @@ void App::OnConvertClicked() {
 }
 
 void App::OnCropSaveClicked() {
-    if (!document_.has_value() || !hasPendingSelection_) {
+    if (!document_.has_value() || !hasPendingSelection_ || !previewDocument_.has_value()) {
         return;
     }
 
@@ -159,13 +171,6 @@ void App::OnCropSaveClicked() {
     if (ext != L"png" && ext != L"jpg" && ext != L"jpeg") {
         statusIsError_ = true;
         statusMessage_ = "対応していない拡張子です（.png / .jpg / .jpeg のみ）。";
-        return;
-    }
-
-    auto cropped = image_ops::CropImage(*document_, selRectLeft_, selRectTop_, selRectRight_, selRectBottom_);
-    if (!cropped.has_value()) {
-        statusIsError_ = true;
-        statusMessage_ = "選択範囲が不正です。";
         return;
     }
 
@@ -182,9 +187,9 @@ void App::OnCropSaveClicked() {
     std::string error;
     bool ok = false;
     if (ext == L"png") {
-        ok = image_io::SaveAsPng(*cropped, outputPath, error);
+        ok = image_io::SaveAsPng(*previewDocument_, outputPath, error);
     } else {
-        ok = image_io::SaveAsJpeg(*cropped, outputPath, jpegQuality_, error);
+        ok = image_io::SaveAsJpeg(*previewDocument_, outputPath, jpegQuality_, error);
     }
 
     statusIsError_ = !ok;
@@ -192,13 +197,23 @@ void App::OnCropSaveClicked() {
 
     if (ok) {
         hasPendingSelection_ = false;
+        previewDocument_.reset();
+        previewTexture_.Release();
         mode_ = Mode::Idle;
+        // CropPreview中はfooter構成が異なりレイアウトが変わるため、
+        // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
+        ResetImageDisplayCache();
     }
 }
 
 void App::OnCropBackClicked() {
     hasPendingSelection_ = false;
+    previewDocument_.reset();
+    previewTexture_.Release();
     mode_ = Mode::Idle;
+    // CropPreview中はfooter構成が異なりレイアウトが変わるため、
+    // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
+    ResetImageDisplayCache();
 }
 
 // マウス入力を処理し、mode_・ドラッグ座標・選択範囲確定を更新する。
@@ -267,16 +282,22 @@ void App::UpdateCropInputState() {
             top = std::clamp(top, 0, document_->height);
             bottom = std::clamp(bottom, 0, document_->height);
 
-            if (right <= left || bottom <= top) {
+            auto cropped = image_ops::CropImage(*document_, left, top, right, bottom);
+            if (!cropped.has_value()) {
                 // 退化選択（移動量ゼロなど）は誤クリック救済のため無視する。
                 mode_ = Mode::Idle;
                 hasPendingSelection_ = false;
+                previewDocument_.reset();
+                previewTexture_.Release();
             } else {
                 selRectLeft_ = left;
                 selRectTop_ = top;
                 selRectRight_ = right;
                 selRectBottom_ = bottom;
                 hasPendingSelection_ = true;
+                previewDocument_ = std::move(cropped);
+                previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width,
+                                        previewDocument_->height);
                 mode_ = Mode::CropPreview;
             }
         }
@@ -303,19 +324,11 @@ void App::DrawCropOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySiz
     const float texToFullX = document_->width / static_cast<float>(texture_.Width());
     const float texToFullY = document_->height / static_cast<float>(texture_.Height());
 
-    if (mode_ == Mode::Cropping || (mode_ == Mode::CropPreview && hasPendingSelection_)) {
-        float left, top, right, bottom;
-        if (mode_ == Mode::Cropping) {
-            left = std::min(dragStartImagePx_.x, dragCurrentImagePx_.x);
-            right = std::max(dragStartImagePx_.x, dragCurrentImagePx_.x);
-            top = std::min(dragStartImagePx_.y, dragCurrentImagePx_.y);
-            bottom = std::max(dragStartImagePx_.y, dragCurrentImagePx_.y);
-        } else {
-            left = static_cast<float>(selRectLeft_);
-            top = static_cast<float>(selRectTop_);
-            right = static_cast<float>(selRectRight_);
-            bottom = static_cast<float>(selRectBottom_);
-        }
+    if (mode_ == Mode::Cropping) {
+        const float left = std::min(dragStartImagePx_.x, dragCurrentImagePx_.x);
+        const float right = std::max(dragStartImagePx_.x, dragCurrentImagePx_.x);
+        const float top = std::min(dragStartImagePx_.y, dragCurrentImagePx_.y);
+        const float bottom = std::max(dragStartImagePx_.y, dragCurrentImagePx_.y);
 
         // 画像ピクセル座標→画面座標への逆変換。
         const ImVec2 p0(imageScreenPos.x + left / texToFullX * fitScale,
@@ -349,11 +362,18 @@ void App::OnFrame() {
         ImGui::Text("選択中: %s", WStringToUtf8(GetFileName(selectedPath_)).c_str());
         ImGui::Text("%d x %d", document_->width, document_->height);
 
-        if (texture_.IsValid()) {
-            // footer高さ見積もり（mode_を参照する）より前にマウス入力を処理し、
-            // このフレームで採用されるmode_を確定させる。これにより、ドラッグ確定
-            // フレームでもfooter見積もりと実際の描画とでmode_の食い違いが生じない。
-            UpdateCropInputState();
+        // CropPreview中は実際にクロップした結果画像（previewTexture_）を表示する。
+        // それ以外（Idle/Cropping）は元画像（texture_）を表示する。
+        const bool showPreview = (mode_ == Mode::CropPreview) && previewTexture_.IsValid();
+        GLTexture& displayTexture = showPreview ? previewTexture_ : texture_;
+
+        if (displayTexture.IsValid()) {
+            if (!showPreview) {
+                // footer高さ見積もり（mode_を参照する）より前にマウス入力を処理し、
+                // このフレームで採用されるmode_を確定させる。これにより、ドラッグ確定
+                // フレームでもfooter見積もりと実際の描画とでmode_の食い違いが生じない。
+                UpdateCropInputState();
+            }
 
             const ImVec2 avail = ImGui::GetContentRegionAvail();
             // 画像より下に「このフレームで」表示される要素から、footer高さを見積もる。
@@ -382,18 +402,21 @@ void App::OnFrame() {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
             }
             const float availableImageHeight = std::max(0.0f, avail.y - footerHeight);
-            const float fitScale = std::min({avail.x / static_cast<float>(texture_.Width()),
-                                              availableImageHeight / static_cast<float>(texture_.Height()), 1.0f});
-            const ImVec2 displaySize(texture_.Width() * fitScale, texture_.Height() * fitScale);
+            const float fitScale =
+                std::min({avail.x / static_cast<float>(displayTexture.Width()),
+                          availableImageHeight / static_cast<float>(displayTexture.Height()), 1.0f});
+            const ImVec2 displaySize(displayTexture.Width() * fitScale, displayTexture.Height() * fitScale);
             const ImVec2 imageScreenPos = ImGui::GetCursorScreenPos();
 
-            ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture_.Id())), displaySize);
-            DrawCropOverlay(imageScreenPos, displaySize);
+            ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(displayTexture.Id())), displaySize);
+            if (!showPreview) {
+                DrawCropOverlay(imageScreenPos, displaySize);
 
-            // 次フレームのUpdateCropInputStateで使うため、このフレームで確定した
-            // 表示位置・サイズをキャッシュしておく。
-            lastImageScreenPos_ = imageScreenPos;
-            lastDisplaySize_ = displaySize;
+                // 次フレームのUpdateCropInputStateで使うため、このフレームで確定した
+                // 表示位置・サイズをキャッシュしておく（Idle/Cropping時のみ）。
+                lastImageScreenPos_ = imageScreenPos;
+                lastDisplaySize_ = displaySize;
+            }
         }
 
         if (mode_ == Mode::Idle) {

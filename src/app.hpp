@@ -24,6 +24,9 @@ private:
     void OnConvertClicked();
     void OnCropSaveClicked();
     void OnCropBackClicked();
+    // 表示位置・サイズのキャッシュ（lastImageScreenPos_/lastDisplaySize_）と
+    // ドラッグ座標を無効化する。画像切り替え時やクロップ操作終了時に呼び出す。
+    void ResetImageDisplayCache();
     // マウス入力を処理しmode_/ドラッグ座標を更新する。座標変換には前フレームで
     // キャッシュした表示位置・サイズ（lastImageScreenPos_/lastDisplaySize_）を使うため、
     // このフレームのレイアウト計算（footer高さ見積もり等）より前に呼び出せる。
@@ -34,6 +37,8 @@ private:
 
     std::optional<ImageDocument> document_;
     GLTexture texture_;
+    std::optional<ImageDocument> previewDocument_;
+    GLTexture previewTexture_;
     std::wstring selectedPath_;
 
     int jpegQuality_ = 90;
