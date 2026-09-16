@@ -24,7 +24,13 @@ private:
     void OnConvertClicked();
     void OnCropSaveClicked();
     void OnCropBackClicked();
-    void UpdateCropInteraction(const ImVec2& imageScreenPos, const ImVec2& displaySize);
+    // マウス入力を処理しmode_/ドラッグ座標を更新する。座標変換には前フレームで
+    // キャッシュした表示位置・サイズ（lastImageScreenPos_/lastDisplaySize_）を使うため、
+    // このフレームのレイアウト計算（footer高さ見積もり等）より前に呼び出せる。
+    void UpdateCropInputState();
+    // 選択範囲のオーバーレイ描画とホバー領域(InvisibleButton)の配置を行う。
+    // このフレームで確定したimageScreenPos/displaySizeを使う。
+    void DrawCropOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySize);
 
     std::optional<ImageDocument> document_;
     GLTexture texture_;
@@ -37,6 +43,10 @@ private:
     Mode mode_ = Mode::Idle;
     ImVec2 dragStartImagePx_{};
     ImVec2 dragCurrentImagePx_{};
+    // 前フレームでImGui::Image描画に使った表示位置・サイズ。
+    // UpdateCropInputStateでの画面座標→画像ピクセル座標変換の基準に使う。
+    ImVec2 lastImageScreenPos_{};
+    ImVec2 lastDisplaySize_{};
     bool hasPendingSelection_ = false;
     int selRectLeft_ = 0;
     int selRectTop_ = 0;

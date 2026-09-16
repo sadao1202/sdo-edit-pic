@@ -107,6 +107,9 @@ void App::OnOpenClicked() {
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
     statusMessage_.clear();
     statusIsError_ = false;
+    // 新しい画像に切り替わったため、前の画像の表示位置・サイズのキャッシュは無効化する。
+    lastImageScreenPos_ = ImVec2();
+    lastDisplaySize_ = ImVec2();
 }
 
 void App::OnConvertClicked() {
@@ -198,26 +201,28 @@ void App::OnCropBackClicked() {
     mode_ = Mode::Idle;
 }
 
-// 画面座標系でのドラッグ操作を検出し、フル解像度画像ピクセル座標での選択範囲を確定する。
-// imageScreenPos/displaySizeはImGui::Image直前に取得したフィット表示の位置・サイズ。
-void App::UpdateCropInteraction(const ImVec2& imageScreenPos, const ImVec2& displaySize) {
+// マウス入力を処理し、mode_・ドラッグ座標・選択範囲確定を更新する。
+// 画面座標→画像ピクセル座標の変換には、前フレームでキャッシュした表示位置・サイズ
+// （lastImageScreenPos_/lastDisplaySize_）を使う。これにより、このフレームのレイアウト
+// 計算（footer高さ見積もり・fitScale計算）より前に呼び出しても座標変換が完結できる
+// （＝レイアウト計算とmode_更新の循環依存を避けられる）。
+// 通常操作ではウィンドウサイズ・レイアウトはフレーム間でほぼ変化しないため、
+// 1フレーム前の表示位置・サイズを基準にしても実用上問題ない。
+void App::UpdateCropInputState() {
     if (!document_.has_value() || !texture_.IsValid()) {
         return;
     }
-    if (displaySize.x <= 0.0f || displaySize.y <= 0.0f || texture_.Width() <= 0 || texture_.Height() <= 0) {
+    if (lastDisplaySize_.x <= 0.0f || lastDisplaySize_.y <= 0.0f || texture_.Width() <= 0 ||
+        texture_.Height() <= 0) {
         return;
     }
 
-    ImGui::SetCursorScreenPos(imageScreenPos);
-    ImGui::InvisibleButton("##crop_overlay", displaySize);
-    const bool hovered = ImGui::IsItemHovered();
-
-    const float fitScale = displaySize.x / static_cast<float>(texture_.Width());
+    const float fitScale = lastDisplaySize_.x / static_cast<float>(texture_.Width());
     const float texToFullX = document_->width / static_cast<float>(texture_.Width());
     const float texToFullY = document_->height / static_cast<float>(texture_.Height());
 
     auto screenToImagePx = [&](const ImVec2& screenPos) {
-        const ImVec2 mouseInImage(screenPos.x - imageScreenPos.x, screenPos.y - imageScreenPos.y);
+        const ImVec2 mouseInImage(screenPos.x - lastImageScreenPos_.x, screenPos.y - lastImageScreenPos_.y);
         float imagePxX = mouseInImage.x / fitScale * texToFullX;
         float imagePxY = mouseInImage.y / fitScale * texToFullY;
         imagePxX = std::clamp(imagePxX, 0.0f, static_cast<float>(document_->width));
@@ -225,18 +230,34 @@ void App::UpdateCropInteraction(const ImVec2& imageScreenPos, const ImVec2& disp
         return ImVec2(imagePxX, imagePxY);
     };
 
-    if (mode_ == Mode::Idle && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        dragStartImagePx_ = screenToImagePx(ImGui::GetMousePos());
+    const ImVec2 mousePos = ImGui::GetMousePos();
+    // InvisibleButtonのIsItemHoveredの代わりに、キャッシュした表示矩形との
+    // 簡易な内外判定を用いる（他ウィンドウによる遮蔽は考慮しないが、
+    // 本アプリは全画面固定の単一ウィンドウ構成のため実用上問題ない）。
+    // 下端はfooter高さの変動（statusMessage_の有無等で1行分縮む場合がある）を
+    // 吸収するため、安全マージン分だけ内側に縮めて判定する。これにより、
+    // 画像下のボタン群が上方向にシフトした際に、前フレームでキャッシュされた
+    // （縮む前の大きい）矩形とボタン位置が重なる帯でのクリックが誤って
+    // Croppingモードへの遷移を引き起こすことを防ぐ。
+    const float bottomSafetyMargin = ImGui::GetTextLineHeightWithSpacing();
+    const float safeDisplayHeight = std::max(0.0f, lastDisplaySize_.y - bottomSafetyMargin);
+    const bool insideImage = mousePos.x >= lastImageScreenPos_.x &&
+                              mousePos.x <= lastImageScreenPos_.x + lastDisplaySize_.x &&
+                              mousePos.y >= lastImageScreenPos_.y &&
+                              mousePos.y <= lastImageScreenPos_.y + safeDisplayHeight;
+
+    if (mode_ == Mode::Idle && insideImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        dragStartImagePx_ = screenToImagePx(mousePos);
         dragCurrentImagePx_ = dragStartImagePx_;
         mode_ = Mode::Cropping;
     } else if (mode_ == Mode::Cropping) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            dragCurrentImagePx_ = screenToImagePx(ImGui::GetMousePos());
+            dragCurrentImagePx_ = screenToImagePx(mousePos);
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             // IsMouseReleasedがtrueのフレームではIsMouseDownはfalseのため、
             // 上のブロックで更新されない。離した瞬間の位置で確定するため再計算する。
-            dragCurrentImagePx_ = screenToImagePx(ImGui::GetMousePos());
+            dragCurrentImagePx_ = screenToImagePx(mousePos);
             int left = static_cast<int>(std::round(std::min(dragStartImagePx_.x, dragCurrentImagePx_.x)));
             int right = static_cast<int>(std::round(std::max(dragStartImagePx_.x, dragCurrentImagePx_.x)));
             int top = static_cast<int>(std::round(std::min(dragStartImagePx_.y, dragCurrentImagePx_.y)));
@@ -260,6 +281,27 @@ void App::UpdateCropInteraction(const ImVec2& imageScreenPos, const ImVec2& disp
             }
         }
     }
+}
+
+// 選択範囲のオーバーレイ描画とホバー領域(InvisibleButton)の配置を行う。
+// imageScreenPos/displaySizeはImGui::Image直前に取得した、このフレームで確定した
+// フィット表示の位置・サイズ。ここで配置したInvisibleButtonは次フレームの
+// UpdateCropInputStateでの入力判定には使わず、あくまでこのフレームの見た目
+// （ホバー時のカーソル等）のためのもの。
+void App::DrawCropOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySize) {
+    if (!document_.has_value() || !texture_.IsValid()) {
+        return;
+    }
+    if (displaySize.x <= 0.0f || displaySize.y <= 0.0f || texture_.Width() <= 0 || texture_.Height() <= 0) {
+        return;
+    }
+
+    ImGui::SetCursorScreenPos(imageScreenPos);
+    ImGui::InvisibleButton("##crop_overlay", displaySize);
+
+    const float fitScale = displaySize.x / static_cast<float>(texture_.Width());
+    const float texToFullX = document_->width / static_cast<float>(texture_.Width());
+    const float texToFullY = document_->height / static_cast<float>(texture_.Height());
 
     if (mode_ == Mode::Cropping || (mode_ == Mode::CropPreview && hasPendingSelection_)) {
         float left, top, right, bottom;
@@ -308,14 +350,50 @@ void App::OnFrame() {
         ImGui::Text("%d x %d", document_->width, document_->height);
 
         if (texture_.IsValid()) {
+            // footer高さ見積もり（mode_を参照する）より前にマウス入力を処理し、
+            // このフレームで採用されるmode_を確定させる。これにより、ドラッグ確定
+            // フレームでもfooter見積もりと実際の描画とでmode_の食い違いが生じない。
+            UpdateCropInputState();
+
             const ImVec2 avail = ImGui::GetContentRegionAvail();
+            // 画像より下に「このフレームで」表示される要素から、footer高さを見積もる。
+            // 前フレームの実測値には頼らない（UI構成が変わるフレームでのガタつきを防ぐため）。
+            float footerHeight = 0.0f;
+            // 案内テキスト/選択範囲サイズテキスト（Cropping中は非表示）
+            if (mode_ == Mode::Idle || mode_ == Mode::CropPreview) {
+                footerHeight += ImGui::GetTextLineHeightWithSpacing();
+            }
+            // JPEG品質スライダー
+            if (ext == L"png") {
+                footerHeight += ImGui::GetFrameHeightWithSpacing();
+            }
+            // アルファ警告テキスト
+            if (document_->HasAlpha() && ext == L"png") {
+                footerHeight += ImGui::GetTextLineHeightWithSpacing();
+            }
+            // 「変換して保存」ボタン（常に表示）
+            footerHeight += ImGui::GetFrameHeightWithSpacing();
+            // 「保存」「戻る」ボタン行
+            if (mode_ != Mode::Idle) {
+                footerHeight += ImGui::GetFrameHeightWithSpacing();
+            }
+            // ステータスメッセージ
+            if (!statusMessage_.empty()) {
+                footerHeight += ImGui::GetTextLineHeightWithSpacing();
+            }
+            const float availableImageHeight = std::max(0.0f, avail.y - footerHeight);
             const float fitScale = std::min({avail.x / static_cast<float>(texture_.Width()),
-                                              avail.y / static_cast<float>(texture_.Height()), 1.0f});
+                                              availableImageHeight / static_cast<float>(texture_.Height()), 1.0f});
             const ImVec2 displaySize(texture_.Width() * fitScale, texture_.Height() * fitScale);
             const ImVec2 imageScreenPos = ImGui::GetCursorScreenPos();
 
             ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture_.Id())), displaySize);
-            UpdateCropInteraction(imageScreenPos, displaySize);
+            DrawCropOverlay(imageScreenPos, displaySize);
+
+            // 次フレームのUpdateCropInputStateで使うため、このフレームで確定した
+            // 表示位置・サイズをキャッシュしておく。
+            lastImageScreenPos_ = imageScreenPos;
+            lastDisplaySize_ = displaySize;
         }
 
         if (mode_ == Mode::Idle) {

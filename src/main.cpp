@@ -69,7 +69,7 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
 
-    GLFWwindow* window = glfwCreateWindow(900, 650, "sdo-edit-pic", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1100, 800, "sdo-edit-pic", nullptr, nullptr);
     if (!window) {
         std::fprintf(stderr, "ウィンドウの作成に失敗しました。\n");
         ReportFatalError(L"ウィンドウの作成に失敗しました。");
