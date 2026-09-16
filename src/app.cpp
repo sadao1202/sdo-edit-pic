@@ -15,6 +15,7 @@
 
 #include <imgui.h>
 
+#include "app_paths.hpp"
 #include "file_dialog.hpp"
 #include "image_io.hpp"
 #include "image_ops.hpp"
@@ -52,26 +53,6 @@ std::wstring GetFileName(const std::wstring& path) {
     size_t start = path.find_last_of(L"/\\");
     start = (start == std::wstring::npos) ? 0 : start + 1;
     return path.substr(start);
-}
-
-// exe自身が置かれているディレクトリを返す（末尾に'\'を付与）。
-// バッファが切り詰められた場合や取得に失敗した場合はstd::nulloptを返す。
-std::optional<std::wstring> GetExeDirectory() {
-    wchar_t buffer[MAX_PATH] = {};
-    DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-    if (length == 0) {
-        return std::nullopt;
-    }
-    if (length >= MAX_PATH) {
-        // バッファに収まりきらず切り詰められた。
-        return std::nullopt;
-    }
-    std::wstring exePath(buffer, length);
-    size_t slashPos = exePath.find_last_of(L"/\\");
-    if (slashPos == std::wstring::npos) {
-        return std::nullopt;
-    }
-    return exePath.substr(0, slashPos + 1);
 }
 
 std::string WStringToUtf8(const std::wstring& text) {
@@ -141,14 +122,14 @@ void App::OnConvertClicked() {
         return;
     }
 
-    const auto exeDirectory = GetExeDirectory();
-    if (!exeDirectory.has_value()) {
+    const auto dataDirectory = app_paths::GetDataDirectory();
+    if (!dataDirectory.has_value()) {
         statusIsError_ = true;
         statusMessage_ = "保存先ディレクトリの取得に失敗しました。";
         return;
     }
     const std::wstring outputPath =
-        *exeDirectory + GetBaseNameWithoutExtension(selectedPath_) + L"." + targetExt;
+        *dataDirectory + GetBaseNameWithoutExtension(selectedPath_) + L"." + targetExt;
 
     std::string error;
     bool ok = false;
@@ -174,15 +155,15 @@ void App::OnCropSaveClicked() {
         return;
     }
 
-    const auto exeDirectory = GetExeDirectory();
-    if (!exeDirectory.has_value()) {
+    const auto dataDirectory = app_paths::GetDataDirectory();
+    if (!dataDirectory.has_value()) {
         statusIsError_ = true;
         statusMessage_ = "保存先ディレクトリの取得に失敗しました。";
         return;
     }
 
     const std::wstring outputPath =
-        *exeDirectory + GetBaseNameWithoutExtension(selectedPath_) + L"_cropped." + ext;
+        *dataDirectory + GetBaseNameWithoutExtension(selectedPath_) + L"_cropped." + ext;
 
     std::string error;
     bool ok = false;

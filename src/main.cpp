@@ -7,6 +7,8 @@
 #include <backends/imgui_impl_opengl3.h>
 
 #include <cstdio>
+#include <optional>
+#include <string>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -16,6 +18,7 @@
 #endif
 
 #include "app.hpp"
+#include "app_paths.hpp"
 
 namespace {
 
@@ -95,6 +98,10 @@ int main() {
 
 #ifdef _WIN32
     LoadJapaneseFont(io);
+
+    // io.IniFilenameはImGui側で文字列をコピーしないため、staticでプロセス寿命の間保持する。
+    static const std::optional<std::string> kIniPath = app_paths::GetImGuiIniPathUtf8();
+    io.IniFilename = kIniPath.has_value() ? kIniPath->c_str() : nullptr;
 #endif
 
     ImGui::StyleColorsDark();

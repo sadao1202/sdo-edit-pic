@@ -67,6 +67,7 @@ endif()
 add_executable(sdo_edit_pic ${APP_WIN32_FLAG}
   src/main.cpp
   src/app.cpp
+  src/app_paths.cpp
   src/image_document.cpp
   src/image_io.cpp
   src/image_ops.cpp
@@ -87,6 +88,8 @@ target_link_libraries(sdo_edit_pic PRIVATE
   glfw
   opengl32
   comdlg32
+  shell32
+  ole32
 )
 
 if(MINGW)
