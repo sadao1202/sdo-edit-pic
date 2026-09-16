@@ -139,30 +139,34 @@ void App::OnCancelEditClicked() {
     ResetImageDisplayCache();
 }
 
-// 現在のdocument_を保存する。
-// 注意: 本設計書の時点ではまだfile_dialog::SaveFileDialogが存在しないため、
-// 暫定的にapp_paths::GetDataDirectory() + selectedPath_のベース名で決め打ち保存する。
-// 保存先選択ダイアログの設計書で、ダイアログ経由の実装に置き換える。
+// 現在のdocument_を、ユーザーがダイアログで選んだ保存先に保存する。
+// 保存は非破壊: document_ / previousDocument_ / appliedEditCount_ / mode_ /
+// selectedPath_ のいずれも変更しない。
 void App::OnSaveClicked() {
     if (!document_.has_value() || mode_ != Mode::Idle) {
         return;
     }
 
-    const std::wstring ext = GetLowerExtension(selectedPath_);
-    const std::wstring targetExt = (ext == L"jpg" || ext == L"jpeg") ? ext : L"png";
-
     const auto dataDirectory = app_paths::GetDataDirectory();
-    if (!dataDirectory.has_value()) {
-        statusIsError_ = true;
-        statusMessage_ = "保存先ディレクトリの取得に失敗しました。";
+    const std::wstring initialDirectory = dataDirectory.value_or(L"");
+    const std::wstring initialBaseName = GetBaseNameWithoutExtension(selectedPath_);
+
+    auto outputPathOpt = file_dialog::SaveFileDialog(initialDirectory, initialBaseName);
+    if (!outputPathOpt.has_value()) {
         return;
     }
-    const std::wstring outputPath =
-        *dataDirectory + GetBaseNameWithoutExtension(selectedPath_) + L"." + targetExt;
+    const std::wstring outputPath = *outputPathOpt;
+
+    const std::wstring ext = GetLowerExtension(outputPath);
+    if (ext != L"png" && ext != L"jpg" && ext != L"jpeg") {
+        statusIsError_ = true;
+        statusMessage_ = "対応していない拡張子です（.png / .jpg / .jpeg のみ）。";
+        return;
+    }
 
     std::string error;
     bool ok = false;
-    if (targetExt == L"png") {
+    if (ext == L"png") {
         ok = image_io::SaveAsPng(*document_, outputPath, error);
     } else {
         ok = image_io::SaveAsJpeg(*document_, outputPath, jpegQuality_, error);
