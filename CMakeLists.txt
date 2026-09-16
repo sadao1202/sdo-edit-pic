@@ -59,6 +59,11 @@ else()
   set(APP_WIN32_FLAG WIN32)
 endif()
 
+set(APP_RC_SOURCES "")
+if(MINGW)
+  set(APP_RC_SOURCES resources/app.rc)
+endif()
+
 add_executable(sdo_edit_pic ${APP_WIN32_FLAG}
   src/main.cpp
   src/app.cpp
@@ -67,6 +72,7 @@ add_executable(sdo_edit_pic ${APP_WIN32_FLAG}
   src/image_ops.cpp
   src/gl_texture.cpp
   src/file_dialog.cpp
+  ${APP_RC_SOURCES}
 )
 
 set_target_properties(sdo_edit_pic PROPERTIES OUTPUT_NAME "画像編集")
