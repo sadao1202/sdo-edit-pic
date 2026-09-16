@@ -101,6 +101,10 @@ void App::OnOpenClicked() {
     previewDocument_.reset();
     previewTexture_.Release();
     mode_ = Mode::Idle;
+    mosaicMask_.clear();
+    mosaicStrokeActive_ = false;
+    mosaicMaskDirty_ = false;
+    mosaicStrokePoints_.clear();
     statusMessage_.clear();
     statusIsError_ = false;
     // 新しい画像に切り替わったため、前の画像の表示位置・サイズのキャッシュは無効化する。
@@ -110,6 +114,7 @@ void App::OnOpenClicked() {
 // mode_に応じた未適用結果（editedをmove）をdocument_に反映する共通処理。
 // コピーを発生させないため、呼び出し元はstd::moveで所有権を渡すこと。
 void App::ApplyEditedDocument(ImageDocument&& edited) {
+    const bool wasMosaic = (mode_ == Mode::Mosaic);
     previousDocument_ = std::move(*document_);
     document_ = std::move(edited);
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
@@ -117,14 +122,21 @@ void App::ApplyEditedDocument(ImageDocument&& edited) {
     previewTexture_.Release();
     ++appliedEditCount_;
     mode_ = Mode::Idle;
+    // モザイクのモード離脱時はマスクを必ず解放する（次回モード突入時にサイズを取り直す）。
+    mosaicMask_.clear();
+    mosaicStrokeActive_ = false;
+    mosaicMaskDirty_ = false;
+    mosaicStrokePoints_.clear();
     // footer構成が変わるため、前フレームのキャッシュを無効化する。
     ResetImageDisplayCache();
-    statusMessage_ = "トリミングを適用しました";
+    statusMessage_ = wasMosaic ? "モザイクを適用しました" : "トリミングを適用しました";
     statusIsError_ = false;
 }
 
 void App::OnApplyClicked() {
-    if (mode_ != Mode::CropPreview || !previewDocument_.has_value()) {
+    const bool cropReady = (mode_ == Mode::CropPreview);
+    const bool mosaicReady = (mode_ == Mode::Mosaic && mosaicMaskDirty_);
+    if ((!cropReady && !mosaicReady) || !previewDocument_.has_value()) {
         return;
     }
     ApplyEditedDocument(std::move(*previewDocument_));
@@ -134,9 +146,41 @@ void App::OnCancelEditClicked() {
     previewDocument_.reset();
     previewTexture_.Release();
     mode_ = Mode::Idle;
-    // CropPreview中はfooter構成が異なりレイアウトが変わるため、
+    mosaicMask_.clear();
+    mosaicStrokeActive_ = false;
+    mosaicMaskDirty_ = false;
+    mosaicStrokePoints_.clear();
+    // CropPreview/Mosaic中はfooter構成が異なりレイアウトが変わるため、
     // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
     ResetImageDisplayCache();
+}
+
+// Idle かつ document_ があるときに呼ばれる。モザイクモードに入り、
+// document_と同サイズの空マスクとプレビューを用意する。
+void App::OnMosaicClicked() {
+    if (!document_.has_value() || mode_ != Mode::Idle) {
+        return;
+    }
+    mosaicMask_.assign(static_cast<size_t>(document_->width) * static_cast<size_t>(document_->height), 0);
+    mosaicMaskDirty_ = false;
+    mosaicStrokeActive_ = false;
+    mosaicStrokePoints_.clear();
+    previewDocument_ = *document_;
+    previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width, previewDocument_->height);
+    mode_ = Mode::Mosaic;
+    ResetImageDisplayCache();
+}
+
+// previewDocument_をdocument_から作り直し、mosaicMask_にApplyMosaicを適用して
+// previewTexture_へアップロードする。常にdocument_（作業中の元画像）から計算し直す
+// ため、塗り重ねても二重モザイクにならない。
+void App::RecomputeMosaicPreview() {
+    if (!document_.has_value()) {
+        return;
+    }
+    previewDocument_ = *document_;
+    image_ops::ApplyMosaic(*previewDocument_, mosaicMask_, mosaicBlockSize_);
+    previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width, previewDocument_->height);
 }
 
 // 現在のdocument_を、ユーザーがダイアログで選んだ保存先に保存する。
@@ -323,6 +367,117 @@ void App::DrawCropOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySiz
     }
 }
 
+// マウス入力を処理しmosaicMask_・mosaicStrokeActive_・mosaicMaskDirty_を更新する
+// （UpdateCropInputStateと同形）。座標変換の前提は同じだが、Mosaic中は表示に
+// previewTexture_（previewDocument_）を使う。previewDocument_はdocument_と同サイズ
+// のため、texture_基準の座標変換式をそのまま使ってよい。
+void App::UpdateMosaicInputState() {
+    if (!document_.has_value() || !texture_.IsValid()) {
+        return;
+    }
+    if (lastDisplaySize_.x <= 0.0f || lastDisplaySize_.y <= 0.0f || texture_.Width() <= 0 ||
+        texture_.Height() <= 0) {
+        return;
+    }
+
+    const float fitScale = lastDisplaySize_.x / static_cast<float>(texture_.Width());
+    const float texToFullX = document_->width / static_cast<float>(texture_.Width());
+    const float texToFullY = document_->height / static_cast<float>(texture_.Height());
+
+    auto screenToImagePx = [&](const ImVec2& screenPos) {
+        const ImVec2 mouseInImage(screenPos.x - lastImageScreenPos_.x, screenPos.y - lastImageScreenPos_.y);
+        float imagePxX = mouseInImage.x / fitScale * texToFullX;
+        float imagePxY = mouseInImage.y / fitScale * texToFullY;
+        imagePxX = std::clamp(imagePxX, 0.0f, static_cast<float>(document_->width));
+        imagePxY = std::clamp(imagePxY, 0.0f, static_cast<float>(document_->height));
+        return ImVec2(imagePxX, imagePxY);
+    };
+
+    const ImVec2 mousePos = ImGui::GetMousePos();
+    // UpdateCropInputStateと同じ理由で、下端に安全マージンを設けてボタン帯との
+    // 誤操作を防ぐ。
+    const float bottomSafetyMargin = ImGui::GetTextLineHeightWithSpacing();
+    const float safeDisplayHeight = std::max(0.0f, lastDisplaySize_.y - bottomSafetyMargin);
+    const bool insideImage = mousePos.x >= lastImageScreenPos_.x &&
+                              mousePos.x <= lastImageScreenPos_.x + lastDisplaySize_.x &&
+                              mousePos.y >= lastImageScreenPos_.y &&
+                              mousePos.y <= lastImageScreenPos_.y + safeDisplayHeight;
+
+    const int radius = std::max(1, mosaicBrushDiameter_ / 2);
+
+    auto paintSegment = [&](const ImVec2& from, const ImVec2& to) {
+        const int x0 = static_cast<int>(std::round(from.x));
+        const int y0 = static_cast<int>(std::round(from.y));
+        const int x1 = static_cast<int>(std::round(to.x));
+        const int y1 = static_cast<int>(std::round(to.y));
+        image_ops::PaintBrushLine(mosaicMask_, document_->width, document_->height, x0, y0, x1, y1, radius);
+    };
+
+    if (!mosaicStrokeActive_ && insideImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const ImVec2 px = screenToImagePx(mousePos);
+        mosaicStrokeActive_ = true;
+        mosaicLastImagePx_ = px;
+        mosaicStrokePoints_.clear();
+        mosaicStrokePoints_.push_back(px);
+        paintSegment(px, px);
+    } else if (mosaicStrokeActive_) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            const ImVec2 px = screenToImagePx(mousePos);
+            paintSegment(mosaicLastImagePx_, px);
+            mosaicLastImagePx_ = px;
+            mosaicStrokePoints_.push_back(px);
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            // IsMouseReleasedのフレームではIsMouseDownがfalseのため、
+            // 上のブロックで更新されない。離した瞬間の位置で塗り切ってから確定する。
+            const ImVec2 px = screenToImagePx(mousePos);
+            paintSegment(mosaicLastImagePx_, px);
+            mosaicStrokeActive_ = false;
+            mosaicMaskDirty_ = true;
+            mosaicStrokePoints_.clear();
+            // ここで初めて1回だけ、document_から作り直して再計算する。
+            RecomputeMosaicPreview();
+        }
+    }
+}
+
+// モザイクのブラシ軌跡（ドラッグ中のみ）とカーソル位置のブラシ円アウトラインを
+// 描画する。このフレームで確定したimageScreenPos/displaySizeを使う。
+void App::DrawMosaicOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySize) {
+    if (!document_.has_value() || !texture_.IsValid()) {
+        return;
+    }
+    if (displaySize.x <= 0.0f || displaySize.y <= 0.0f || texture_.Width() <= 0 || texture_.Height() <= 0) {
+        return;
+    }
+
+    ImGui::SetCursorScreenPos(imageScreenPos);
+    ImGui::InvisibleButton("##mosaic_overlay", displaySize);
+
+    const float fitScale = displaySize.x / static_cast<float>(texture_.Width());
+    const float texToFullX = document_->width / static_cast<float>(texture_.Width());
+    const float texToFullY = document_->height / static_cast<float>(texture_.Height());
+
+    auto imagePxToScreen = [&](const ImVec2& px) {
+        return ImVec2(imageScreenPos.x + px.x / texToFullX * fitScale, imageScreenPos.y + px.y / texToFullY * fitScale);
+    };
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float brushRadiusScreen =
+        std::max(1.0f, (mosaicBrushDiameter_ / 2.0f) / texToFullX * fitScale);
+
+    if (mosaicStrokeActive_ && mosaicStrokePoints_.size() >= 2) {
+        for (size_t i = 0; i + 1 < mosaicStrokePoints_.size(); ++i) {
+            drawList->AddLine(imagePxToScreen(mosaicStrokePoints_[i]), imagePxToScreen(mosaicStrokePoints_[i + 1]),
+                               IM_COL32(255, 80, 80, 160), brushRadiusScreen * 2.0f);
+        }
+    }
+
+    if (ImGui::IsItemHovered()) {
+        drawList->AddCircle(ImGui::GetMousePos(), brushRadiusScreen, IM_COL32(255, 255, 255, 220), 32, 2.0f);
+    }
+}
+
 void App::OnFrame() {
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
@@ -339,14 +494,21 @@ void App::OnFrame() {
         OnOpenClicked();
     }
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!document_.has_value() || mode_ != Mode::Idle);
+    if (ImGui::Button("モザイク")) {
+        OnMosaicClicked();
+    }
+    ImGui::EndDisabled();
 
     if (document_.has_value()) {
         ImGui::Text("選択中: %s", WStringToUtf8(GetFileName(selectedPath_)).c_str());
         ImGui::Text("%d x %d", document_->width, document_->height);
 
-        // CropPreview中は実際にクロップした結果画像（previewTexture_）を表示する。
-        // それ以外（Idle/Cropping）は元画像（texture_）を表示する。
-        const bool showPreview = (mode_ == Mode::CropPreview) && previewTexture_.IsValid();
+        // CropPreview/Mosaic中は実際に編集を適用した結果画像（previewTexture_）を
+        // 表示する。それ以外（Idle/Cropping）は元画像（texture_）を表示する。
+        const bool showPreview =
+            (mode_ == Mode::CropPreview || mode_ == Mode::Mosaic) && previewTexture_.IsValid();
         GLTexture& displayTexture = showPreview ? previewTexture_ : texture_;
 
         if (displayTexture.IsValid()) {
@@ -355,15 +517,23 @@ void App::OnFrame() {
                 // このフレームで採用されるmode_を確定させる。これにより、ドラッグ確定
                 // フレームでもfooter見積もりと実際の描画とでmode_の食い違いが生じない。
                 UpdateCropInputState();
+            } else if (mode_ == Mode::Mosaic) {
+                // Mosaic中はプレビュー表示だが、ブラシ入力の受付とキャッシュ更新は
+                // 必要なため、Cropとは異なりここでも入力処理を行う。
+                UpdateMosaicInputState();
             }
 
             const ImVec2 avail = ImGui::GetContentRegionAvail();
             // 画像より下に「このフレームで」表示される要素から、footer高さを見積もる。
             // 前フレームの実測値には頼らない（UI構成が変わるフレームでのガタつきを防ぐため）。
             float footerHeight = 0.0f;
-            // [1] 案内テキスト/選択範囲サイズテキスト（Cropping中は非表示）
+            // [1] 案内テキスト/選択範囲サイズテキスト（Cropping中は非表示）。
+            // Mosaic中は案内1行＋スライダー2行分を見積もる（漏らすと縦スクロールが再発する）。
             if (mode_ == Mode::Idle || mode_ == Mode::CropPreview) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
+            } else if (mode_ == Mode::Mosaic) {
+                footerHeight += ImGui::GetTextLineHeightWithSpacing();
+                footerHeight += ImGui::GetFrameHeightWithSpacing() * 2.0f;
             }
             // [2] JPEG品質スライダー（常時表示）
             footerHeight += ImGui::GetFrameHeightWithSpacing();
@@ -396,6 +566,13 @@ void App::OnFrame() {
                 // 表示位置・サイズをキャッシュしておく（Idle/Cropping時のみ）。
                 lastImageScreenPos_ = imageScreenPos;
                 lastDisplaySize_ = displaySize;
+            } else if (mode_ == Mode::Mosaic) {
+                DrawMosaicOverlay(imageScreenPos, displaySize);
+
+                // Mosaic中はプレビュー表示中でも次フレームのUpdateMosaicInputStateで
+                // 座標変換に使うため、キャッシュを更新する（CropPreviewとの違い）。
+                lastImageScreenPos_ = imageScreenPos;
+                lastDisplaySize_ = displaySize;
             }
         }
 
@@ -403,6 +580,15 @@ void App::OnFrame() {
             ImGui::TextDisabled("ドラッグして範囲を選択するとトリミングできます");
         } else if (mode_ == Mode::CropPreview) {
             ImGui::Text("選択範囲: %d x %d px", selRectRight_ - selRectLeft_, selRectBottom_ - selRectTop_);
+        } else if (mode_ == Mode::Mosaic) {
+            ImGui::TextDisabled("ドラッグしてなぞった範囲にモザイクをかけます");
+            ImGui::SliderInt("ブロックサイズ", &mosaicBlockSize_, 2, 64);
+            mosaicBlockSize_ = std::clamp(mosaicBlockSize_, 2, 64);
+            if (ImGui::IsItemDeactivatedAfterEdit() && mosaicMaskDirty_) {
+                RecomputeMosaicPreview();
+            }
+            ImGui::SliderInt("ブラシの太さ", &mosaicBrushDiameter_, 4, 200);
+            mosaicBrushDiameter_ = std::clamp(mosaicBrushDiameter_, 4, 200);
         }
 
         // [2] JPEG品質スライダー（出力形式は保存ダイアログまで確定しないため常時表示）
@@ -417,7 +603,9 @@ void App::OnFrame() {
 
     // [4] 編集操作行：mode_ != Idleのときのみ表示
     if (mode_ != Mode::Idle) {
-        ImGui::BeginDisabled(mode_ != Mode::CropPreview);
+        const bool applyEnabled =
+            (mode_ == Mode::CropPreview) || (mode_ == Mode::Mosaic && mosaicMaskDirty_);
+        ImGui::BeginDisabled(!applyEnabled);
         if (ImGui::Button("適用")) {
             OnApplyClicked();
         }
