@@ -64,6 +64,7 @@ add_executable(sdo_edit_pic ${APP_WIN32_FLAG}
   src/app.cpp
   src/image_document.cpp
   src/image_io.cpp
+  src/image_ops.cpp
   src/gl_texture.cpp
   src/file_dialog.cpp
 )

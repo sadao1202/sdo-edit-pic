@@ -3,6 +3,8 @@
 #include <optional>
 #include <string>
 
+#include <imgui.h>
+
 #include "gl_texture.hpp"
 #include "image_document.hpp"
 
@@ -12,8 +14,17 @@ public:
     void OnFrame();
 
 private:
+    enum class Mode {
+        Idle,        // 通常表示
+        Cropping,    // ドラッグ中〜矩形確定前
+        CropPreview, // ドラッグ確定後、保存/戻る待ち
+    };
+
     void OnOpenClicked();
     void OnConvertClicked();
+    void OnCropSaveClicked();
+    void OnCropBackClicked();
+    void UpdateCropInteraction(const ImVec2& imageScreenPos, const ImVec2& displaySize);
 
     std::optional<ImageDocument> document_;
     GLTexture texture_;
@@ -22,4 +33,13 @@ private:
     int jpegQuality_ = 90;
     std::string statusMessage_;
     bool statusIsError_ = false;
+
+    Mode mode_ = Mode::Idle;
+    ImVec2 dragStartImagePx_{};
+    ImVec2 dragCurrentImagePx_{};
+    bool hasPendingSelection_ = false;
+    int selRectLeft_ = 0;
+    int selRectTop_ = 0;
+    int selRectRight_ = 0;
+    int selRectBottom_ = 0;
 };
