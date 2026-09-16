@@ -93,11 +93,13 @@ void App::OnOpenClicked() {
     document_ = std::move(doc);
     selectedPath_ = *path;
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
+    originalDocument_ = *document_;
+    previousDocument_.reset();
+    appliedEditCount_ = 0;
     // 念のため、残っているクロッププレビュー状態をクリアしておく
     // （通常はIdle時のみ画像を開けるため発生しないはず）。
     previewDocument_.reset();
     previewTexture_.Release();
-    hasPendingSelection_ = false;
     mode_ = Mode::Idle;
     statusMessage_.clear();
     statusIsError_ = false;
@@ -105,22 +107,49 @@ void App::OnOpenClicked() {
     ResetImageDisplayCache();
 }
 
-void App::OnConvertClicked() {
-    if (!document_.has_value()) {
+// mode_に応じた未適用結果（editedをmove）をdocument_に反映する共通処理。
+// コピーを発生させないため、呼び出し元はstd::moveで所有権を渡すこと。
+void App::ApplyEditedDocument(ImageDocument&& edited) {
+    previousDocument_ = std::move(*document_);
+    document_ = std::move(edited);
+    texture_.Upload(document_->pixels.data(), document_->width, document_->height);
+    previewDocument_.reset();
+    previewTexture_.Release();
+    ++appliedEditCount_;
+    mode_ = Mode::Idle;
+    // footer構成が変わるため、前フレームのキャッシュを無効化する。
+    ResetImageDisplayCache();
+    statusMessage_ = "トリミングを適用しました";
+    statusIsError_ = false;
+}
+
+void App::OnApplyClicked() {
+    if (mode_ != Mode::CropPreview || !previewDocument_.has_value()) {
+        return;
+    }
+    ApplyEditedDocument(std::move(*previewDocument_));
+}
+
+void App::OnCancelEditClicked() {
+    previewDocument_.reset();
+    previewTexture_.Release();
+    mode_ = Mode::Idle;
+    // CropPreview中はfooter構成が異なりレイアウトが変わるため、
+    // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
+    ResetImageDisplayCache();
+}
+
+// 現在のdocument_を保存する。
+// 注意: 本設計書の時点ではまだfile_dialog::SaveFileDialogが存在しないため、
+// 暫定的にapp_paths::GetDataDirectory() + selectedPath_のベース名で決め打ち保存する。
+// 保存先選択ダイアログの設計書で、ダイアログ経由の実装に置き換える。
+void App::OnSaveClicked() {
+    if (!document_.has_value() || mode_ != Mode::Idle) {
         return;
     }
 
     const std::wstring ext = GetLowerExtension(selectedPath_);
-    std::wstring targetExt;
-    if (ext == L"png") {
-        targetExt = L"jpg";
-    } else if (ext == L"jpg" || ext == L"jpeg") {
-        targetExt = L"png";
-    } else {
-        statusIsError_ = true;
-        statusMessage_ = "対応していない拡張子です（.png / .jpg / .jpeg のみ）。";
-        return;
-    }
+    const std::wstring targetExt = (ext == L"jpg" || ext == L"jpeg") ? ext : L"png";
 
     const auto dataDirectory = app_paths::GetDataDirectory();
     if (!dataDirectory.has_value()) {
@@ -133,68 +162,40 @@ void App::OnConvertClicked() {
 
     std::string error;
     bool ok = false;
-    if (targetExt == L"jpg") {
-        ok = image_io::SaveAsJpeg(*document_, outputPath, jpegQuality_, error);
-    } else {
+    if (targetExt == L"png") {
         ok = image_io::SaveAsPng(*document_, outputPath, error);
-    }
-
-    statusIsError_ = !ok;
-    statusMessage_ = ok ? ("保存先: " + WStringToUtf8(outputPath)) : error;
-}
-
-void App::OnCropSaveClicked() {
-    if (!document_.has_value() || !hasPendingSelection_ || !previewDocument_.has_value()) {
-        return;
-    }
-
-    const std::wstring ext = GetLowerExtension(selectedPath_);
-    if (ext != L"png" && ext != L"jpg" && ext != L"jpeg") {
-        statusIsError_ = true;
-        statusMessage_ = "対応していない拡張子です（.png / .jpg / .jpeg のみ）。";
-        return;
-    }
-
-    const auto dataDirectory = app_paths::GetDataDirectory();
-    if (!dataDirectory.has_value()) {
-        statusIsError_ = true;
-        statusMessage_ = "保存先ディレクトリの取得に失敗しました。";
-        return;
-    }
-
-    const std::wstring outputPath =
-        *dataDirectory + GetBaseNameWithoutExtension(selectedPath_) + L"_cropped." + ext;
-
-    std::string error;
-    bool ok = false;
-    if (ext == L"png") {
-        ok = image_io::SaveAsPng(*previewDocument_, outputPath, error);
     } else {
-        ok = image_io::SaveAsJpeg(*previewDocument_, outputPath, jpegQuality_, error);
+        ok = image_io::SaveAsJpeg(*document_, outputPath, jpegQuality_, error);
     }
 
     statusIsError_ = !ok;
     statusMessage_ = ok ? ("保存先: " + WStringToUtf8(outputPath)) : error;
-
-    if (ok) {
-        hasPendingSelection_ = false;
-        previewDocument_.reset();
-        previewTexture_.Release();
-        mode_ = Mode::Idle;
-        // CropPreview中はfooter構成が異なりレイアウトが変わるため、
-        // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
-        ResetImageDisplayCache();
-    }
 }
 
-void App::OnCropBackClicked() {
-    hasPendingSelection_ = false;
-    previewDocument_.reset();
-    previewTexture_.Release();
-    mode_ = Mode::Idle;
-    // CropPreview中はfooter構成が異なりレイアウトが変わるため、
-    // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
+void App::OnUndoClicked() {
+    if (!previousDocument_.has_value()) {
+        return;
+    }
+    document_ = std::move(*previousDocument_);
+    previousDocument_.reset();
+    texture_.Upload(document_->pixels.data(), document_->width, document_->height);
+    appliedEditCount_ = std::max(0, appliedEditCount_ - 1);
     ResetImageDisplayCache();
+    statusMessage_ = "1つ前の状態に戻しました";
+    statusIsError_ = false;
+}
+
+void App::OnRevertToOriginalClicked() {
+    if (!originalDocument_.has_value()) {
+        return;
+    }
+    document_ = *originalDocument_;
+    previousDocument_.reset();
+    appliedEditCount_ = 0;
+    texture_.Upload(document_->pixels.data(), document_->width, document_->height);
+    ResetImageDisplayCache();
+    statusMessage_ = "元の画像に戻しました";
+    statusIsError_ = false;
 }
 
 // マウス入力を処理し、mode_・ドラッグ座標・選択範囲確定を更新する。
@@ -267,7 +268,6 @@ void App::UpdateCropInputState() {
             if (!cropped.has_value()) {
                 // 退化選択（移動量ゼロなど）は誤クリック救済のため無視する。
                 mode_ = Mode::Idle;
-                hasPendingSelection_ = false;
                 previewDocument_.reset();
                 previewTexture_.Release();
             } else {
@@ -275,7 +275,6 @@ void App::UpdateCropInputState() {
                 selRectTop_ = top;
                 selRectRight_ = right;
                 selRectBottom_ = bottom;
-                hasPendingSelection_ = true;
                 previewDocument_ = std::move(cropped);
                 previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width,
                                         previewDocument_->height);
@@ -337,8 +336,6 @@ void App::OnFrame() {
     }
     ImGui::EndDisabled();
 
-    const std::wstring ext = GetLowerExtension(selectedPath_);
-
     if (document_.has_value()) {
         ImGui::Text("選択中: %s", WStringToUtf8(GetFileName(selectedPath_)).c_str());
         ImGui::Text("%d x %d", document_->width, document_->height);
@@ -360,25 +357,23 @@ void App::OnFrame() {
             // 画像より下に「このフレームで」表示される要素から、footer高さを見積もる。
             // 前フレームの実測値には頼らない（UI構成が変わるフレームでのガタつきを防ぐため）。
             float footerHeight = 0.0f;
-            // 案内テキスト/選択範囲サイズテキスト（Cropping中は非表示）
+            // [1] 案内テキスト/選択範囲サイズテキスト（Cropping中は非表示）
             if (mode_ == Mode::Idle || mode_ == Mode::CropPreview) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
             }
-            // JPEG品質スライダー
-            if (ext == L"png") {
-                footerHeight += ImGui::GetFrameHeightWithSpacing();
-            }
-            // アルファ警告テキスト
-            if (document_->HasAlpha() && ext == L"png") {
+            // [2] JPEG品質スライダー（常時表示）
+            footerHeight += ImGui::GetFrameHeightWithSpacing();
+            // [3] アルファ警告テキスト（常時表示条件）
+            if (document_->HasAlpha()) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
             }
-            // 「変換して保存」ボタン（常に表示）
-            footerHeight += ImGui::GetFrameHeightWithSpacing();
-            // 「保存」「戻る」ボタン行
+            // [4] 編集操作行（[適用][キャンセル]）: mode_ != Idleのときのみ1行
             if (mode_ != Mode::Idle) {
                 footerHeight += ImGui::GetFrameHeightWithSpacing();
             }
-            // ステータスメッセージ
+            // [5] 画像操作行（[保存...][1つ前に戻す][最初の画像に戻す]）: 常時1行
+            footerHeight += ImGui::GetFrameHeightWithSpacing();
+            // [6] ステータスメッセージ
             if (!statusMessage_.empty()) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
             }
@@ -406,34 +401,49 @@ void App::OnFrame() {
             ImGui::Text("選択範囲: %d x %d px", selRectRight_ - selRectLeft_, selRectBottom_ - selRectTop_);
         }
 
-        if (ext == L"png") {
-            ImGui::SliderInt("JPEG品質", &jpegQuality_, 1, 100);
-            jpegQuality_ = std::clamp(jpegQuality_, 1, 100);
-        }
+        // [2] JPEG品質スライダー（出力形式は保存ダイアログまで確定しないため常時表示）
+        ImGui::SliderInt("JPEG品質", &jpegQuality_, 1, 100);
+        jpegQuality_ = std::clamp(jpegQuality_, 1, 100);
 
-        if (document_->HasAlpha() && ext == L"png") {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "透明部分は白背景に変換されます");
+        // [3] アルファ警告テキスト（常時表示条件）
+        if (document_->HasAlpha()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "JPEGで保存すると透明部分は白背景になります");
         }
     }
 
-    ImGui::BeginDisabled(!document_.has_value() || mode_ != Mode::Idle);
-    if (ImGui::Button("変換して保存")) {
-        OnConvertClicked();
-    }
-    ImGui::EndDisabled();
-
+    // [4] 編集操作行：mode_ != Idleのときのみ表示
     if (mode_ != Mode::Idle) {
         ImGui::BeginDisabled(mode_ != Mode::CropPreview);
-        if (ImGui::Button("保存")) {
-            OnCropSaveClicked();
+        if (ImGui::Button("適用")) {
+            OnApplyClicked();
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("戻る")) {
-            OnCropBackClicked();
+        if (ImGui::Button("キャンセル")) {
+            OnCancelEditClicked();
         }
     }
 
+    // [5] 画像操作行：常に同じ位置に同じ3ボタン。編集中はグレーアウトのみ。
+    ImGui::BeginDisabled(!document_.has_value() || mode_ != Mode::Idle);
+    if (ImGui::Button("保存...")) {
+        OnSaveClicked();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(mode_ != Mode::Idle || !previousDocument_.has_value());
+    if (ImGui::Button("1つ前に戻す")) {
+        OnUndoClicked();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(mode_ != Mode::Idle || appliedEditCount_ <= 0);
+    if (ImGui::Button("最初の画像に戻す")) {
+        OnRevertToOriginalClicked();
+    }
+    ImGui::EndDisabled();
+
+    // [6] ステータスメッセージ
     if (!statusMessage_.empty()) {
         ImGui::TextColored(statusIsError_ ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
                             "%s", statusMessage_.c_str());

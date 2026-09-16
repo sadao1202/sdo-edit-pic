@@ -21,9 +21,14 @@ private:
     };
 
     void OnOpenClicked();
-    void OnConvertClicked();
-    void OnCropSaveClicked();
-    void OnCropBackClicked();
+    void OnApplyClicked();
+    void OnCancelEditClicked();
+    void OnSaveClicked();
+    void OnUndoClicked();
+    void OnRevertToOriginalClicked();
+    // モード共通の「適用」処理。previousDocument_へ現状のdocument_を退避したうえで、
+    // editedをstd::moveでdocument_へ反映する（コピーを発生させない）。
+    void ApplyEditedDocument(ImageDocument&& edited);
     // 表示位置・サイズのキャッシュ（lastImageScreenPos_/lastDisplaySize_）と
     // ドラッグ座標を無効化する。画像切り替え時やクロップ操作終了時に呼び出す。
     void ResetImageDisplayCache();
@@ -35,7 +40,10 @@ private:
     // このフレームで確定したimageScreenPos/displaySizeを使う。
     void DrawCropOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySize);
 
-    std::optional<ImageDocument> document_;
+    std::optional<ImageDocument> originalDocument_;  // 読み込み直後の画像（以後不変）
+    std::optional<ImageDocument> document_;          // 作業中の画像
+    std::optional<ImageDocument> previousDocument_;  // 直前の適用前スナップショット（1段のみ）
+    int appliedEditCount_ = 0;                       // 適用済み編集回数（0なら元画像と同一）
     GLTexture texture_;
     std::optional<ImageDocument> previewDocument_;
     GLTexture previewTexture_;
@@ -52,7 +60,6 @@ private:
     // UpdateCropInputStateでの画面座標→画像ピクセル座標変換の基準に使う。
     ImVec2 lastImageScreenPos_{};
     ImVec2 lastDisplaySize_{};
-    bool hasPendingSelection_ = false;
     int selRectLeft_ = 0;
     int selRectTop_ = 0;
     int selRectRight_ = 0;
