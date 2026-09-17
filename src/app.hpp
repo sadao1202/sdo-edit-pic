@@ -51,6 +51,12 @@ private:
     // previewDocument_をdocument_から作り直し、mosaicMask_にApplyMosaicを適用して
     // previewTexture_へアップロードする（ストローク確定時・ブロックサイズ変更時に使用）。
     void RecomputeMosaicPreview();
+    // 表示対象の元画像（showPreview判定と同じ規則でpreviewDocument_かdocument_）に
+    // JPEG品質ラウンドトリップを適用し、成功ならjpegPreviewTexture_へアップロードする。
+    // 失敗時はInvalidateJpegPreview()してエラーステータスを表示する。
+    void RecomputeJpegPreview();
+    // jpegPreviewTexture_を解放し、劣化プレビュー表示中である旨のステータスをクリアする。
+    void InvalidateJpegPreview();
 
     std::optional<ImageDocument> originalDocument_;  // 読み込み直後の画像（以後不変）
     std::optional<ImageDocument> document_;          // 作業中の画像
@@ -59,6 +65,14 @@ private:
     GLTexture texture_;
     std::optional<ImageDocument> previewDocument_;
     GLTexture previewTexture_;
+    // JPEG品質スライダーのデバウンス確定時にのみ再計算する劣化プレビュー。
+    // 表示専用（document_/previewDocument_/保存出力には一切影響しない）。
+    // 有効判定はIsValid()を単一の真実とし、別途boolフラグは持たない。
+    GLTexture jpegPreviewTexture_;
+    // statusMessage_/statusIsError_が現在、RecomputeJpegPreview()によって
+    // セットされたものであるかを示す。InvalidateJpegPreview()はこれがtrueのときのみ
+    // statusMessage_/statusIsError_をクリアする。
+    bool jpegPreviewStatusOwned_ = false;
     std::wstring selectedPath_;
 
     int jpegQuality_ = 90;

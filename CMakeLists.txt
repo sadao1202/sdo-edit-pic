@@ -75,6 +75,8 @@ if(SDO_BUILD_APP)
     src/app_paths.cpp
     src/image_document.cpp
     src/image_io.cpp
+    src/image_codec.cpp
+    src/stb_impl.cpp
     src/image_ops.cpp
     src/gl_texture.cpp
     src/file_dialog.cpp
@@ -115,3 +117,16 @@ add_executable(image_ops_tests
 target_include_directories(image_ops_tests PRIVATE src)
 
 add_test(NAME image_ops_tests COMMAND image_ops_tests)
+
+# image_codec（JPEGエンコード/デコード、Win32非依存）の自動テスト。
+# stb実装本体（stb_impl.cpp）とimage_codec.cpp、image_document.cppのみをリンクし、
+# WSL上のネイティブLinuxビルドで実行できる。
+add_executable(image_codec_tests
+  src/image_document.cpp
+  src/image_codec.cpp
+  src/stb_impl.cpp
+  tests/image_codec_tests.cpp
+)
+target_include_directories(image_codec_tests PRIVATE src third_party/stb)
+
+add_test(NAME image_codec_tests COMMAND image_codec_tests)

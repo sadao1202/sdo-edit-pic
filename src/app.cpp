@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cwctype>
 #include <optional>
+#include <string>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -17,6 +18,7 @@
 
 #include "app_paths.hpp"
 #include "file_dialog.hpp"
+#include "image_codec.hpp"
 #include "image_io.hpp"
 #include "image_ops.hpp"
 
@@ -85,6 +87,7 @@ void App::OnOpenClicked() {
     std::string error;
     auto doc = image_io::LoadImage(*path, error);
     if (!doc.has_value()) {
+        InvalidateJpegPreview();
         statusMessage_ = error;
         statusIsError_ = true;
         return;
@@ -107,6 +110,8 @@ void App::OnOpenClicked() {
     mosaicStrokePoints_.clear();
     statusMessage_.clear();
     statusIsError_ = false;
+    // 画像を開いたため、劣化プレビューは無効化する。
+    InvalidateJpegPreview();
     // 新しい画像に切り替わったため、前の画像の表示位置・サイズのキャッシュは無効化する。
     ResetImageDisplayCache();
 }
@@ -129,6 +134,8 @@ void App::ApplyEditedDocument(ImageDocument&& edited) {
     mosaicStrokePoints_.clear();
     // footer構成が変わるため、前フレームのキャッシュを無効化する。
     ResetImageDisplayCache();
+    // 表示対象の元画像が変わるため、劣化プレビューは無効化する。
+    InvalidateJpegPreview();
     statusMessage_ = wasMosaic ? "モザイクを適用しました" : "トリミングを適用しました";
     statusIsError_ = false;
 }
@@ -153,6 +160,8 @@ void App::OnCancelEditClicked() {
     // CropPreview/Mosaic中はfooter構成が異なりレイアウトが変わるため、
     // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
     ResetImageDisplayCache();
+    // 表示対象の元画像がdocument_に戻るため、劣化プレビューは無効化する。
+    InvalidateJpegPreview();
 }
 
 // Idle かつ document_ があるときに呼ばれる。モザイクモードに入り、
@@ -169,6 +178,8 @@ void App::OnMosaicClicked() {
     previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width, previewDocument_->height);
     mode_ = Mode::Mosaic;
     ResetImageDisplayCache();
+    // モザイクモードに突入し表示対象がpreviewDocument_へ切り替わるため、無効化する。
+    InvalidateJpegPreview();
 }
 
 // previewDocument_をdocument_から作り直し、mosaicMask_にApplyMosaicを適用して
@@ -181,6 +192,58 @@ void App::RecomputeMosaicPreview() {
     previewDocument_ = *document_;
     image_ops::ApplyMosaic(*previewDocument_, mosaicMask_, mosaicBlockSize_);
     previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width, previewDocument_->height);
+    // 表示対象の元画像が変わるため、劣化プレビューは無効化する。
+    InvalidateJpegPreview();
+}
+
+// jpegPreviewTexture_を解放し、劣化プレビュー表示中である旨のステータスをクリアする。
+void App::InvalidateJpegPreview() {
+    jpegPreviewTexture_.Release();
+    if (jpegPreviewStatusOwned_) {
+        statusMessage_.clear();
+        statusIsError_ = false;
+        jpegPreviewStatusOwned_ = false;
+    }
+}
+
+// 表示対象の元画像（showPreview判定と同じ規則でpreviewDocument_かdocument_）に
+// JPEG品質ラウンドトリップを適用し、成功ならjpegPreviewTexture_へアップロードする。
+// 失敗時はInvalidateJpegPreview()してエラーステータスを表示する。表示専用の処理のため、
+// document_/previewDocument_/保存出力には一切影響させない。
+void App::RecomputeJpegPreview() {
+    const bool showPreview = (mode_ == Mode::CropPreview || mode_ == Mode::Mosaic) && previewDocument_.has_value();
+    const ImageDocument* source = showPreview ? &(*previewDocument_) : (document_.has_value() ? &(*document_) : nullptr);
+    if (!source) {
+        InvalidateJpegPreview();
+        return;
+    }
+
+    std::string error;
+    std::optional<ImageDocument> result;
+    try {
+        result = image_codec::MakeJpegRoundTrip(*source, jpegQuality_, error);
+        if (result.has_value()) {
+            jpegPreviewTexture_.Upload(result->pixels.data(), result->width, result->height);
+        }
+    } catch (const std::exception& e) {
+        result.reset();
+        error = e.what();
+    } catch (...) {
+        result.reset();
+        error = "JPEGプレビューの生成に失敗しました。";
+    }
+
+    if (!result.has_value()) {
+        InvalidateJpegPreview();
+        statusIsError_ = true;
+        statusMessage_ = error.empty() ? "JPEGプレビューの生成に失敗しました。" : error;
+        jpegPreviewStatusOwned_ = true;
+        return;
+    }
+
+    statusIsError_ = false;
+    statusMessage_ = "JPEG品質 " + std::to_string(jpegQuality_) + " のプレビューを表示中（保存内容には影響しません）";
+    jpegPreviewStatusOwned_ = true;
 }
 
 // 現在のdocument_を、ユーザーがダイアログで選んだ保存先に保存する。
@@ -203,6 +266,7 @@ void App::OnSaveClicked() {
 
     const std::wstring ext = GetLowerExtension(outputPath);
     if (ext != L"png" && ext != L"jpg" && ext != L"jpeg") {
+        InvalidateJpegPreview();
         statusIsError_ = true;
         statusMessage_ = "対応していない拡張子です（.png / .jpg / .jpeg のみ）。";
         return;
@@ -216,6 +280,7 @@ void App::OnSaveClicked() {
         ok = image_io::SaveAsJpeg(*document_, outputPath, jpegQuality_, error);
     }
 
+    InvalidateJpegPreview();
     statusIsError_ = !ok;
     statusMessage_ = ok ? ("保存先: " + WStringToUtf8(outputPath)) : error;
 }
@@ -229,6 +294,7 @@ void App::OnUndoClicked() {
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
     appliedEditCount_ = std::max(0, appliedEditCount_ - 1);
     ResetImageDisplayCache();
+    InvalidateJpegPreview();
     statusMessage_ = "1つ前の状態に戻しました";
     statusIsError_ = false;
 }
@@ -242,6 +308,7 @@ void App::OnRevertToOriginalClicked() {
     appliedEditCount_ = 0;
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
     ResetImageDisplayCache();
+    InvalidateJpegPreview();
     statusMessage_ = "元の画像に戻しました";
     statusIsError_ = false;
 }
@@ -327,6 +394,8 @@ void App::UpdateCropInputState() {
                 previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width,
                                         previewDocument_->height);
                 mode_ = Mode::CropPreview;
+                // クロップ確定により表示対象がpreviewDocument_へ切り替わるため無効化する。
+                InvalidateJpegPreview();
             }
         }
     }
@@ -509,7 +578,10 @@ void App::OnFrame() {
         // 表示する。それ以外（Idle/Cropping）は元画像（texture_）を表示する。
         const bool showPreview =
             (mode_ == Mode::CropPreview || mode_ == Mode::Mosaic) && previewTexture_.IsValid();
-        GLTexture& displayTexture = showPreview ? previewTexture_ : texture_;
+        GLTexture& baseTexture = showPreview ? previewTexture_ : texture_;
+        // JPEG劣化プレビューが有効なら、元画像/編集プレビューより優先して表示する
+        // （表示専用。座標変換・オーバーレイの基準はbaseTexture/texture_のまま変更しない）。
+        GLTexture& displayTexture = jpegPreviewTexture_.IsValid() ? jpegPreviewTexture_ : baseTexture;
 
         if (displayTexture.IsValid()) {
             if (!showPreview) {
@@ -594,6 +666,9 @@ void App::OnFrame() {
         // [2] JPEG品質スライダー（出力形式は保存ダイアログまで確定しないため常時表示）
         ImGui::SliderInt("JPEG品質", &jpegQuality_, 1, 100);
         jpegQuality_ = std::clamp(jpegQuality_, 1, 100);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            RecomputeJpegPreview();
+        }
 
         // [3] アルファ警告テキスト（常時表示条件）
         if (document_->HasAlpha()) {
