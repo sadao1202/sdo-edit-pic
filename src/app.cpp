@@ -24,7 +24,7 @@
 
 namespace {
 
-constexpr int kDefaultJpegQuality = 90;
+constexpr int kDefaultJpegQuality = 100;
 
 // パスの拡張子を小文字化して返す（ドットなし）。
 // ファイル名部分（ディレクトリ区切り以降）に限定してドットを探す。
