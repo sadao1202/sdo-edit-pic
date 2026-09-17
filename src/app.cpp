@@ -105,6 +105,7 @@ void App::OnOpenClicked() {
     previewTexture_.Release();
     mode_ = Mode::Idle;
     mosaicMask_.clear();
+    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
     mosaicStrokeActive_ = false;
     mosaicMaskDirty_ = false;
     mosaicStrokePoints_.clear();
@@ -129,6 +130,7 @@ void App::ApplyEditedDocument(ImageDocument&& edited) {
     mode_ = Mode::Idle;
     // モザイクのモード離脱時はマスクを必ず解放する（次回モード突入時にサイズを取り直す）。
     mosaicMask_.clear();
+    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
     mosaicStrokeActive_ = false;
     mosaicMaskDirty_ = false;
     mosaicStrokePoints_.clear();
@@ -154,6 +156,7 @@ void App::OnCancelEditClicked() {
     previewTexture_.Release();
     mode_ = Mode::Idle;
     mosaicMask_.clear();
+    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
     mosaicStrokeActive_ = false;
     mosaicMaskDirty_ = false;
     mosaicStrokePoints_.clear();
@@ -171,6 +174,7 @@ void App::OnMosaicClicked() {
         return;
     }
     mosaicMask_.assign(static_cast<size_t>(document_->width) * static_cast<size_t>(document_->height), 0);
+    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
     mosaicMaskDirty_ = false;
     mosaicStrokeActive_ = false;
     mosaicStrokePoints_.clear();
@@ -180,6 +184,21 @@ void App::OnMosaicClicked() {
     ResetImageDisplayCache();
     // モザイクモードに突入し表示対象がpreviewDocument_へ切り替わるため、無効化する。
     InvalidateJpegPreview();
+}
+
+// 直前の1ストロークをmosaicMaskHistory_から復元して取り消す。ドラッグ中や履歴が
+// 空の場合は何もしない。
+void App::OnMosaicUndoStrokeClicked() {
+    if (mode_ != Mode::Mosaic || mosaicStrokeActive_ || mosaicMaskHistory_.empty()) {
+        return;
+    }
+    mosaicMask_ = std::move(mosaicMaskHistory_.back());
+    mosaicMaskHistory_.pop_back();
+    mosaicMaskDirty_ = !mosaicMaskHistory_.empty();
+    mosaicStrokePoints_.clear();
+    RecomputeMosaicPreview();
+    statusMessage_ = "1ストローク戻しました";
+    statusIsError_ = false;
 }
 
 // previewDocument_をdocument_から作り直し、mosaicMask_にApplyMosaicを適用して
@@ -484,6 +503,8 @@ void App::UpdateMosaicInputState() {
 
     if (!mosaicStrokeActive_ && insideImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         const ImVec2 px = screenToImagePx(mousePos);
+        // ストローク開始前のマスクをスナップショットとして積んでおく（Undo用）。
+        mosaicMaskHistory_.push_back(mosaicMask_);
         mosaicStrokeActive_ = true;
         mosaicLastImagePx_ = px;
         mosaicStrokePoints_.clear();
@@ -613,7 +634,7 @@ void App::OnFrame() {
             if (document_->HasAlpha()) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
             }
-            // [4] 編集操作行（[適用][キャンセル]）: mode_ != Idleのときのみ1行
+            // [4] 編集操作行（[適用][1手戻す][キャンセル]）: mode_ != Idleのときのみ1行
             if (mode_ != Mode::Idle) {
                 footerHeight += ImGui::GetFrameHeightWithSpacing();
             }
@@ -654,7 +675,7 @@ void App::OnFrame() {
             ImGui::Text("選択範囲: %d x %d px", selRectRight_ - selRectLeft_, selRectBottom_ - selRectTop_);
         } else if (mode_ == Mode::Mosaic) {
             ImGui::TextDisabled("ドラッグしてなぞった範囲にモザイクをかけます");
-            ImGui::SliderInt("ブロックサイズ", &mosaicBlockSize_, 2, 64);
+            ImGui::SliderInt("モザイクの粗さ", &mosaicBlockSize_, 2, 64);
             mosaicBlockSize_ = std::clamp(mosaicBlockSize_, 2, 64);
             if (ImGui::IsItemDeactivatedAfterEdit() && mosaicMaskDirty_) {
                 RecomputeMosaicPreview();
@@ -683,6 +704,14 @@ void App::OnFrame() {
         ImGui::BeginDisabled(!applyEnabled);
         if (ImGui::Button("適用")) {
             OnApplyClicked();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        const bool undoStrokeEnabled =
+            mode_ == Mode::Mosaic && !mosaicStrokeActive_ && !mosaicMaskHistory_.empty();
+        ImGui::BeginDisabled(!undoStrokeEnabled);
+        if (ImGui::Button("1手戻す")) {
+            OnMosaicUndoStrokeClicked();
         }
         ImGui::EndDisabled();
         ImGui::SameLine();

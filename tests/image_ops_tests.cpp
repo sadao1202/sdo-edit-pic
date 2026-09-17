@@ -340,6 +340,139 @@ void Test_ApplyMosaic_AllZeroMaskNoChange() {
     assert(doc.pixels == before);
 }
 
+// 以下は plan/mosaic-ui-improvements.md の「自動テスト可能範囲」
+// （正常系1-4、境界値5-6、異常系7）に対応する。
+// 履歴管理自体はApp（GUI結合）にあり直接テストできないため、Undoの正しさが
+// 依存する「マスク復元だけでプレビューが再現できる」決定性を確認する。
+
+// 正常系1: 同一のdocumentコピーと同一マスク・同一blockSizeでApplyMosaicを2回実行すると、
+// 完全に同一のピクセル列になる。
+void Test_ApplyMosaic_Deterministic() {
+    ImageDocument doc1;
+    doc1.width = 6;
+    doc1.height = 6;
+    doc1.channels = 4;
+    doc1.pixels.resize(6 * 6 * 4);
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 6; ++x) {
+            SetPixel(doc1, x, y, static_cast<unsigned char>(x * 20), static_cast<unsigned char>(y * 20), 30, 255);
+        }
+    }
+    ImageDocument doc2 = doc1;
+    std::vector<unsigned char> mask(36, 0);
+    for (int i = 0; i < 36; i += 2) {
+        mask[i] = 1;
+    }
+    assert(image_ops::ApplyMosaic(doc1, mask, 3));
+    assert(image_ops::ApplyMosaic(doc2, mask, 3));
+    assert(doc1.pixels == doc2.pixels);
+}
+
+// 正常系2: マスクAで塗った結果と、「マスクAのコピーを取る → さらにBを塗る → コピーへ戻す」
+// で得た結果が一致する（スナップショット復元の等価性）。
+void Test_ApplyMosaic_SnapshotRestoreEquivalence() {
+    ImageDocument baseDoc;
+    baseDoc.width = 8;
+    baseDoc.height = 8;
+    baseDoc.channels = 4;
+    baseDoc.pixels.resize(8 * 8 * 4);
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            SetPixel(baseDoc, x, y, static_cast<unsigned char>(x * 10), static_cast<unsigned char>(y * 10), 40, 255);
+        }
+    }
+
+    std::vector<unsigned char> maskA(64, 0);
+    image_ops::PaintBrushLine(maskA, 8, 8, 1, 1, 3, 1, 1);
+
+    // 期待値: マスクAだけを適用した結果。
+    ImageDocument expected = baseDoc;
+    assert(image_ops::ApplyMosaic(expected, maskA, 2));
+
+    // 実際: マスクAのスナップショットを取ってからBを塗り、スナップショットへ復元。
+    std::vector<unsigned char> maskSnapshot = maskA;
+    std::vector<unsigned char> maskWithB = maskA;
+    image_ops::PaintBrushLine(maskWithB, 8, 8, 5, 5, 7, 5, 1);
+    assert(maskWithB != maskSnapshot);  // Bが確かに追加で塗られている
+    std::vector<unsigned char> restored = maskSnapshot;  // Undo相当の復元
+
+    ImageDocument actual = baseDoc;
+    assert(image_ops::ApplyMosaic(actual, restored, 2));
+
+    assert(actual.pixels == expected.pixels);
+}
+
+// 正常系3: 全0マスクでApplyMosaicを実行すると画像が一切変化しない（全Undo後の状態＝
+// 元画像と一致）。
+void Test_ApplyMosaic_AllZeroMaskEqualsOriginal() {
+    ImageDocument doc = MakeSolidImage(4, 4, 1, 2, 3, 255);
+    for (int i = 0; i < 16; ++i) {
+        doc.pixels[i * 4 + 1] = static_cast<unsigned char>(i * 3);
+    }
+    const std::vector<unsigned char> before = doc.pixels;
+    std::vector<unsigned char> mask(16, 0);
+    assert(image_ops::ApplyMosaic(doc, mask, 4));
+    assert(doc.pixels == before);
+}
+
+// 正常系4: PaintBrushLineを同じ引数で2回呼んでもマスクが変わらない（冪等性）。
+void Test_PaintBrushLine_IdempotentForSameArgs() {
+    const int width = 12;
+    const int height = 12;
+    std::vector<unsigned char> mask(width * height, 0);
+    image_ops::PaintBrushLine(mask, width, height, 1, 1, 9, 5, 2);
+    const std::vector<unsigned char> after1 = mask;
+    image_ops::PaintBrushLine(mask, width, height, 1, 1, 9, 5, 2);
+    assert(mask == after1);
+}
+
+// 境界値5: 1x1画像のマスクでPaintBrushLine / ApplyMosaicが範囲外アクセスしない。
+void Test_OnePixelImage_PaintAndApplyMosaicNoCrash() {
+    std::vector<unsigned char> mask(1, 0);
+    image_ops::PaintBrushLine(mask, 1, 1, 0, 0, 0, 0, 5);
+    assert(mask[0] == 255);
+
+    ImageDocument doc = MakeSolidImage(1, 1, 9, 8, 7, 255);
+    assert(image_ops::ApplyMosaic(doc, mask, 8));
+    assert(doc.pixels[0] == 9 && doc.pixels[1] == 8 && doc.pixels[2] == 7 && doc.pixels[3] == 255);
+}
+
+// 境界値6: blockSizeの下限2・上限64で決定性テスト（観点1）が成立する。
+void Test_ApplyMosaic_DeterministicAtBoundaryBlockSizes() {
+    for (const int blockSize : {2, 64}) {
+        ImageDocument doc1;
+        doc1.width = 8;
+        doc1.height = 8;
+        doc1.channels = 4;
+        doc1.pixels.resize(8 * 8 * 4);
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                SetPixel(doc1, x, y, static_cast<unsigned char>(x * 30), static_cast<unsigned char>(y * 30), 5, 255);
+            }
+        }
+        ImageDocument doc2 = doc1;
+        std::vector<unsigned char> mask(64, 1);
+        assert(image_ops::ApplyMosaic(doc1, mask, blockSize));
+        assert(image_ops::ApplyMosaic(doc2, mask, blockSize));
+        assert(doc1.pixels == doc2.pixels);
+    }
+}
+
+// 異常系7: マスク長がwidth*heightと一致しない場合にApplyMosaicが安全に失敗する
+// （既存挙動の回帰確認。Test_ApplyMosaic_MaskSizeMismatchReturnsFalseと同趣旨だが
+// 本設計書の試験観点番号に合わせて明示的に記載する）。
+void Test_ApplyMosaic_MismatchedMaskLengthFailsSafely() {
+    ImageDocument doc = MakeSolidImage(5, 5, 4, 5, 6, 255);
+    const std::vector<unsigned char> before = doc.pixels;
+    std::vector<unsigned char> tooShortMask(10, 1);
+    assert(!image_ops::ApplyMosaic(doc, tooShortMask, 2));
+    assert(doc.pixels == before);
+
+    std::vector<unsigned char> tooLongMask(40, 1);
+    assert(!image_ops::ApplyMosaic(doc, tooLongMask, 2));
+    assert(doc.pixels == before);
+}
+
 // CropImageの回帰確認テスト。
 void Test_CropImage_BasicCrop() {
     ImageDocument doc;
@@ -403,6 +536,14 @@ int main() {
     Test_BoundaryParameterValues();
     Test_ApplyMosaic_OnePixelImage();
     Test_ApplyMosaic_AllZeroMaskNoChange();
+
+    Test_ApplyMosaic_Deterministic();
+    Test_ApplyMosaic_SnapshotRestoreEquivalence();
+    Test_ApplyMosaic_AllZeroMaskEqualsOriginal();
+    Test_PaintBrushLine_IdempotentForSameArgs();
+    Test_OnePixelImage_PaintAndApplyMosaicNoCrash();
+    Test_ApplyMosaic_DeterministicAtBoundaryBlockSizes();
+    Test_ApplyMosaic_MismatchedMaskLengthFailsSafely();
 
     Test_CropImage_BasicCrop();
     Test_CropImage_DegenerateRangeReturnsNullopt();

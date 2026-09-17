@@ -29,6 +29,8 @@ private:
     void OnUndoClicked();
     void OnRevertToOriginalClicked();
     void OnMosaicClicked();
+    // 直前の1ストロークをmosaicMaskHistory_から復元して取り消す。
+    void OnMosaicUndoStrokeClicked();
     // モード共通の「適用」処理。previousDocument_へ現状のdocument_を退避したうえで、
     // editedをstd::moveでdocument_へ反映する（コピーを発生させない）。
     void ApplyEditedDocument(ImageDocument&& edited);
@@ -92,6 +94,9 @@ private:
     int selRectBottom_ = 0;
 
     std::vector<unsigned char> mosaicMask_;  // document_と同サイズ。Mosaic中のみ有効
+    // モザイクの各ストローク開始直前のmosaicMask_スナップショット（上限なし）。
+    // 空＝モード突入時から1ストロークも確定/保持していない状態。
+    std::vector<std::vector<unsigned char>> mosaicMaskHistory_;
     bool mosaicStrokeActive_ = false;        // ドラッグ中フラグ
     bool mosaicMaskDirty_ = false;           // 1ストローク以上塗られたか
     ImVec2 mosaicLastImagePx_{};             // ストローク補間用の前フレーム位置
