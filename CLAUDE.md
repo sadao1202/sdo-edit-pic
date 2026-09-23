@@ -2,6 +2,14 @@
 
 C/C++によるWindows向け画像編集ソフト。速度と使いやすさを重視する。
 
+## 開発方針
+
+- 「軽くて速い」ことを最重要方針とする。
+- 以下のような、この方針が崩れうる設計を採用する場合は、実装前に必ずユーザーの合意を取ること。
+  - 常時/同期実行の重い処理（毎フレーム・スライダードラッグ中の重い再計算など）
+  - 無制限のメモリ確保（上限のない履歴保持など）
+  - その他、体感速度やメモリ使用量に明確な悪影響を及ぼしうる設計
+
 ## 基本設計
 
 - 言語: C++17
@@ -35,6 +43,7 @@ cmake --build build -j
 - ファイルパスは日本語・空白を含む可能性があるため、`stbi_load`/`stbi_write_*`は直接パスを渡さず、`_wfopen`で開いた`FILE*`経由（`stbi_load_from_file`/`stbi_write_*_to_func`）で扱うこと
 - `imgui_impl_opengl3.cpp`は`IMGUI_IMPL_OPENGL_LOADER_CUSTOM`定義時にGLヘッダをincludeしないため、CMake側で`-include glad/gl.h`を強制インクルードしている（`CMakeLists.txt`参照）
 - GUI操作を伴うE2E試験はWSL上では実施できない。画像I/Oロジック等GUI非依存部分は分離してテスト可能な構造を保つこと
+- アプリが書き込むファイル（`imgui.ini`、変換・トリミング後の画像）は exe と同じディレクトリではなく、`%APPDATA%\sdo-edit-pic\`（`src/app_paths.hpp`/`src/app_paths.cpp`で算出）に保存する
 
 ## 未解決の課題
 
