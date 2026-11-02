@@ -6,6 +6,7 @@
 #include <cwchar>
 
 #include "file_dialog.hpp"
+#include "path_utils.hpp"
 
 namespace file_dialog {
 
@@ -15,15 +16,6 @@ constexpr wchar_t kFilter[] = L"PNG/JPEG画像 (*.png;*.jpg;*.jpeg)\0*.png;*.jpg
 
 constexpr wchar_t kSaveFilter[] =
     L"PNG画像 (*.png)\0*.png\0JPEG画像 (*.jpg;*.jpeg)\0*.jpg;*.jpeg\0";
-
-// パスのファイル名部分（ディレクトリ区切り以降）に'.'が含まれるかどうかを返す。
-// ディレクトリ側に'.'があってもファイル名部分に無ければfalse。
-bool HasFileNameExtension(const std::wstring& path) {
-    size_t start = path.find_last_of(L"/\\");
-    start = (start == std::wstring::npos) ? 0 : start + 1;
-    return path.find_last_of(L'.') != std::wstring::npos &&
-           path.find_last_of(L'.') >= start;
-}
 
 }  // namespace
 
@@ -70,7 +62,7 @@ std::optional<std::wstring> SaveFileDialog(const std::wstring& initialDirectory,
         filterIndex = ofn.nFilterIndex;
 
         std::wstring result(fileBuffer);
-        const bool extensionAppended = !HasFileNameExtension(result);
+        const bool extensionAppended = !path_utils::HasSupportedImageExtension(result);
         if (extensionAppended) {
             result += (ofn.nFilterIndex == 2) ? L".jpg" : L".png";
         }

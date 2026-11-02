@@ -514,6 +514,121 @@ void Test_CropImage_ClampsOutOfRange() {
     assert(cropped->height == 4);
 }
 
+void Test_ClampFixedRect_InsideUnchanged() {
+    const auto r = image_ops::ClampFixedRect(100, 50, 20, 10, 30, 5);
+    assert(r.w == 20 && r.h == 10 && r.left == 30 && r.top == 5);
+}
+
+void Test_ClampFixedRect_OversizeClampedToImage() {
+    const auto r = image_ops::ClampFixedRect(100, 50, 500, 500, 40, 40);
+    assert(r.w == 100 && r.h == 50 && r.left == 0 && r.top == 0);
+}
+
+void Test_ClampFixedRect_NonPositiveSizeBecomesOne() {
+    const auto r = image_ops::ClampFixedRect(100, 50, 0, -5, 10, 10);
+    assert(r.w == 1 && r.h == 1 && r.left == 10 && r.top == 10);
+}
+
+void Test_ClampFixedRect_PositionClampedToCorners() {
+    auto r = image_ops::ClampFixedRect(100, 50, 20, 10, -30, -30);
+    assert(r.left == 0 && r.top == 0);
+    r = image_ops::ClampFixedRect(100, 50, 20, 10, 999, 999);
+    assert(r.left == 80 && r.top == 40);
+}
+
+void Test_ClampFixedRect_OnePixelAndThinImage() {
+    auto r = image_ops::ClampFixedRect(1, 1, 5, 5, 3, 3);
+    assert(r.w == 1 && r.h == 1 && r.left == 0 && r.top == 0);
+    r = image_ops::ClampFixedRect(1000, 1, 10, 10, 995, 7);
+    assert(r.w == 10 && r.h == 1 && r.left == 990 && r.top == 0);
+}
+
+void Test_ClampFixedRect_EmptyImageReturnsZero() {
+    const auto r = image_ops::ClampFixedRect(0, 10, 5, 5, 1, 1);
+    assert(r.w == 0 && r.h == 0 && r.left == 0 && r.top == 0);
+}
+
+void Test_MaxAspectRect_CommonRatios() {
+    auto r = image_ops::MaxAspectRect(1600, 900, 16, 9);  // 比率ぴったり: 全体
+    assert(r.w == 1600 && r.h == 900 && r.left == 0 && r.top == 0);
+    r = image_ops::MaxAspectRect(1000, 1000, 1, 1);
+    assert(r.w == 1000 && r.h == 1000 && r.left == 0 && r.top == 0);
+    r = image_ops::MaxAspectRect(1000, 600, 4, 3);  // 高さ制約: 800x600を中央
+    assert(r.w == 800 && r.h == 600 && r.left == 100 && r.top == 0);
+    r = image_ops::MaxAspectRect(600, 1000, 4, 3);  // 幅制約: 600x450を中央
+    assert(r.w == 600 && r.h == 450 && r.left == 0 && r.top == 275);
+    r = image_ops::MaxAspectRect(1000, 1000, 9, 16);  // 縦版
+    assert(r.w == 562 && r.h == 999 && r.left == 219 && r.top == 0);
+}
+
+void Test_MaxAspectRect_ExtremeImages() {
+    auto r = image_ops::MaxAspectRect(10, 1000, 16, 9);  // 極端に細長い
+    assert(r.w == 10 && r.h == 6 && r.left == 0 && r.top == 497);
+    r = image_ops::MaxAspectRect(1, 1, 16, 9);
+    assert(r.w == 1 && r.h == 1 && r.left == 0 && r.top == 0);
+    r = image_ops::MaxAspectRect(1000, 1, 9, 16);  // 比率を保てない: h<=imgHに丸める
+    assert(r.w >= 1 && r.h == 1 && r.left + r.w <= 1000);
+}
+
+void Test_MaxAspectRect_InvalidArgsReturnZero() {
+    auto r = image_ops::MaxAspectRect(0, 10, 4, 3);
+    assert(r.w == 0 && r.h == 0);
+    r = image_ops::MaxAspectRect(10, 10, 0, 3);
+    assert(r.w == 0 && r.h == 0);
+    r = image_ops::MaxAspectRect(10, 10, 4, -3);
+    assert(r.w == 0 && r.h == 0);
+}
+
+void Test_ClampAspectRect_WidthDrivesHeight() {
+    const auto r = image_ops::ClampAspectRect(1000, 1000, 16, 9, 160, 10, 20);
+    assert(r.w == 160 && r.h == 90 && r.left == 10 && r.top == 20);
+    const auto r2 = image_ops::ClampAspectRect(1000, 1000, 3, 2, 100, 0, 0);  // 66.67 -> 67
+    assert(r2.w == 100 && r2.h == 67);
+}
+
+void Test_ClampAspectRect_WidthClampedToRange() {
+    auto r = image_ops::ClampAspectRect(1000, 500, 4, 3, 0, 0, 0);
+    assert(r.w == 1 && r.h == 1);
+    r = image_ops::ClampAspectRect(1000, 500, 4, 3, -7, 0, 0);
+    assert(r.w == 1 && r.h == 1);
+    r = image_ops::ClampAspectRect(1000, 500, 4, 3, 99999, 0, 0);  // 高さ500に収まる最大幅(667)
+    assert(r.w == 667 && r.h == 500);
+}
+
+void Test_ClampAspectRect_PositionClamped() {
+    auto r = image_ops::ClampAspectRect(100, 100, 1, 1, 40, -30, -30);
+    assert(r.left == 0 && r.top == 0);
+    r = image_ops::ClampAspectRect(100, 100, 1, 1, 40, 999, 999);
+    assert(r.left == 60 && r.top == 60);
+}
+
+void Test_ClampAspectRect_InvalidArgsReturnZero() {
+    const auto r = image_ops::ClampAspectRect(100, 100, 0, 1, 10, 0, 0);
+    assert(r.w == 0 && r.h == 0 && r.left == 0 && r.top == 0);
+}
+
+// 様々な画像サイズ・比率・幅で、枠が必ず画像内に収まり最小1を保つこと（丸め誤差の網羅確認）。
+void Test_AspectRect_AlwaysInsideImage() {
+    const int ratios[][2] = {{1, 1}, {4, 3}, {3, 2}, {16, 9}, {21, 9}, {3, 4}, {2, 3}, {9, 16}, {9, 21}};
+    const int sizes[] = {1, 2, 3, 7, 10, 99, 100, 1000, 1023};
+    for (const auto& ratio : ratios) {
+        for (int imgW : sizes) {
+            for (int imgH : sizes) {
+                auto check = [&](const image_ops::FixedRect& r) {
+                    assert(r.w >= 1 && r.h >= 1);
+                    assert(r.left >= 0 && r.top >= 0);
+                    assert(r.left + r.w <= imgW && r.top + r.h <= imgH);
+                };
+                check(image_ops::MaxAspectRect(imgW, imgH, ratio[0], ratio[1]));
+                for (int w : {-1, 0, 1, 2, 5, imgW / 2, imgW, imgW + 1, 100000}) {
+                    check(image_ops::ClampAspectRect(imgW, imgH, ratio[0], ratio[1], w, imgW, imgH));
+                    check(image_ops::ClampAspectRect(imgW, imgH, ratio[0], ratio[1], w, -imgW, -imgH));
+                }
+            }
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -548,6 +663,22 @@ int main() {
     Test_CropImage_BasicCrop();
     Test_CropImage_DegenerateRangeReturnsNullopt();
     Test_CropImage_ClampsOutOfRange();
+
+    Test_ClampFixedRect_InsideUnchanged();
+    Test_ClampFixedRect_OversizeClampedToImage();
+    Test_ClampFixedRect_NonPositiveSizeBecomesOne();
+    Test_ClampFixedRect_PositionClampedToCorners();
+    Test_ClampFixedRect_OnePixelAndThinImage();
+    Test_ClampFixedRect_EmptyImageReturnsZero();
+
+    Test_MaxAspectRect_CommonRatios();
+    Test_MaxAspectRect_ExtremeImages();
+    Test_MaxAspectRect_InvalidArgsReturnZero();
+    Test_ClampAspectRect_WidthDrivesHeight();
+    Test_ClampAspectRect_WidthClampedToRange();
+    Test_ClampAspectRect_PositionClamped();
+    Test_ClampAspectRect_InvalidArgsReturnZero();
+    Test_AspectRect_AlwaysInsideImage();
 
     std::printf("All image_ops tests passed.\n");
     return 0;
