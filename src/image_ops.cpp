@@ -27,6 +27,26 @@ void PaintCircle(std::vector<unsigned char>& mask, int width, int height, int cx
     }
 }
 
+// 幅wに対する比率どおりの高さ（四捨五入、最小1）。w*ratioHのオーバーフローを避け64bitで計算する。
+int AspectHeight(int w, int ratioW, int ratioH) {
+    const long long num = static_cast<long long>(w) * ratioH;
+    return static_cast<int>(std::max<long long>(1, (num * 2 + ratioW) / (static_cast<long long>(ratioW) * 2)));
+}
+
+// 画像内で比率を保てる最大幅（AspectHeight(w) <= imgH かつ w <= imgW を満たす最大のw、最小1）。
+int MaxAspectWidth(int imgW, int imgH, int ratioW, int ratioH) {
+    const long long est = ((2LL * imgH + 1) * ratioW) / (2LL * ratioH);
+    int w = static_cast<int>(std::clamp<long long>(est, 1, imgW));
+    // 丸めの境界で見積もりがずれる場合に備え、実際の高さで両方向に補正する。
+    while (w > 1 && AspectHeight(w, ratioW, ratioH) > imgH) {
+        --w;
+    }
+    while (w < imgW && AspectHeight(w + 1, ratioW, ratioH) <= imgH) {
+        ++w;
+    }
+    return w;
+}
+
 }  // namespace
 
 FixedRect ClampFixedRect(int imgW, int imgH, int w, int h, int left, int top) {
@@ -36,6 +56,30 @@ FixedRect ClampFixedRect(int imgW, int imgH, int w, int h, int left, int top) {
     }
     rect.w = std::clamp(w, 1, imgW);
     rect.h = std::clamp(h, 1, imgH);
+    rect.left = std::clamp(left, 0, imgW - rect.w);
+    rect.top = std::clamp(top, 0, imgH - rect.h);
+    return rect;
+}
+
+FixedRect MaxAspectRect(int imgW, int imgH, int ratioW, int ratioH) {
+    FixedRect rect;
+    if (imgW <= 0 || imgH <= 0 || ratioW <= 0 || ratioH <= 0) {
+        return rect;
+    }
+    rect.w = MaxAspectWidth(imgW, imgH, ratioW, ratioH);
+    rect.h = std::min(AspectHeight(rect.w, ratioW, ratioH), imgH);
+    rect.left = (imgW - rect.w) / 2;
+    rect.top = (imgH - rect.h) / 2;
+    return rect;
+}
+
+FixedRect ClampAspectRect(int imgW, int imgH, int ratioW, int ratioH, int w, int left, int top) {
+    FixedRect rect;
+    if (imgW <= 0 || imgH <= 0 || ratioW <= 0 || ratioH <= 0) {
+        return rect;
+    }
+    rect.w = std::clamp(w, 1, MaxAspectWidth(imgW, imgH, ratioW, ratioH));
+    rect.h = std::min(AspectHeight(rect.w, ratioW, ratioH), imgH);
     rect.left = std::clamp(left, 0, imgW - rect.w);
     rect.top = std::clamp(top, 0, imgH - rect.h);
     return rect;
