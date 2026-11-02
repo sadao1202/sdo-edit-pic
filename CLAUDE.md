@@ -36,7 +36,10 @@ cmake -S . -B build -G Ninja \
 cmake --build build -j
 ```
 
-依存DLL確認: `x86_64-w64-mingw32-objdump -p build/sdo_edit_pic.exe | grep "DLL Name"`
+依存DLL確認: `x86_64-w64-mingw32-objdump -p build/画像編集.exe | grep "DLL Name"`
+
+- 成果物（exe・テスト用バイナリ等）のビルド出力先は必ずPJ内の`build/`にする。scratchpad・`/tmp`・`/mnt/c`など PJ ディレクトリ外にビルド成果物を置かない（Windows側へのコピーはユーザーが行う）。
+- テスト用の別構成ビルド（Debug等）が必要な場合も、PJ内（`build/`配下のサブディレクトリ等。`build/`はgitignore済み）に作る。
 
 ## 前提・注意事項
 
