@@ -12,6 +12,18 @@ namespace image_ops {
 std::optional<ImageDocument> CropImage(const ImageDocument& doc,
                                         int left, int top, int right, int bottom);
 
+// サイズ指定トリミング用の固定サイズ枠（画像px）。
+struct FixedRect {
+    int w = 0;
+    int h = 0;
+    int left = 0;
+    int top = 0;
+};
+
+// w/hを[1, imgW]/[1, imgH]に丸め、枠が画像内に収まるようleft/topをクランプして返す。
+// imgW <= 0 または imgH <= 0 のときは全て0の FixedRect を返す。
+FixedRect ClampFixedRect(int imgW, int imgH, int w, int h, int left, int top);
+
 // maskは doc.width*doc.height の1バイト/画素。非0の画素が「モザイク対象」。
 // blockSize x blockSize の固定グリッド（画像原点(0,0)基準）で、対象画素を1つ以上
 // 含むブロックをそのブロック内RGB平均色で塗りつぶす。アルファは変更しない。

@@ -514,6 +514,40 @@ void Test_CropImage_ClampsOutOfRange() {
     assert(cropped->height == 4);
 }
 
+void Test_ClampFixedRect_InsideUnchanged() {
+    const auto r = image_ops::ClampFixedRect(100, 50, 20, 10, 30, 5);
+    assert(r.w == 20 && r.h == 10 && r.left == 30 && r.top == 5);
+}
+
+void Test_ClampFixedRect_OversizeClampedToImage() {
+    const auto r = image_ops::ClampFixedRect(100, 50, 500, 500, 40, 40);
+    assert(r.w == 100 && r.h == 50 && r.left == 0 && r.top == 0);
+}
+
+void Test_ClampFixedRect_NonPositiveSizeBecomesOne() {
+    const auto r = image_ops::ClampFixedRect(100, 50, 0, -5, 10, 10);
+    assert(r.w == 1 && r.h == 1 && r.left == 10 && r.top == 10);
+}
+
+void Test_ClampFixedRect_PositionClampedToCorners() {
+    auto r = image_ops::ClampFixedRect(100, 50, 20, 10, -30, -30);
+    assert(r.left == 0 && r.top == 0);
+    r = image_ops::ClampFixedRect(100, 50, 20, 10, 999, 999);
+    assert(r.left == 80 && r.top == 40);
+}
+
+void Test_ClampFixedRect_OnePixelAndThinImage() {
+    auto r = image_ops::ClampFixedRect(1, 1, 5, 5, 3, 3);
+    assert(r.w == 1 && r.h == 1 && r.left == 0 && r.top == 0);
+    r = image_ops::ClampFixedRect(1000, 1, 10, 10, 995, 7);
+    assert(r.w == 10 && r.h == 1 && r.left == 990 && r.top == 0);
+}
+
+void Test_ClampFixedRect_EmptyImageReturnsZero() {
+    const auto r = image_ops::ClampFixedRect(0, 10, 5, 5, 1, 1);
+    assert(r.w == 0 && r.h == 0 && r.left == 0 && r.top == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -548,6 +582,13 @@ int main() {
     Test_CropImage_BasicCrop();
     Test_CropImage_DegenerateRangeReturnsNullopt();
     Test_CropImage_ClampsOutOfRange();
+
+    Test_ClampFixedRect_InsideUnchanged();
+    Test_ClampFixedRect_OversizeClampedToImage();
+    Test_ClampFixedRect_NonPositiveSizeBecomesOne();
+    Test_ClampFixedRect_PositionClampedToCorners();
+    Test_ClampFixedRect_OnePixelAndThinImage();
+    Test_ClampFixedRect_EmptyImageReturnsZero();
 
     std::printf("All image_ops tests passed.\n");
     return 0;

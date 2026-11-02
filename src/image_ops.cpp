@@ -29,6 +29,18 @@ void PaintCircle(std::vector<unsigned char>& mask, int width, int height, int cx
 
 }  // namespace
 
+FixedRect ClampFixedRect(int imgW, int imgH, int w, int h, int left, int top) {
+    FixedRect rect;
+    if (imgW <= 0 || imgH <= 0) {
+        return rect;
+    }
+    rect.w = std::clamp(w, 1, imgW);
+    rect.h = std::clamp(h, 1, imgH);
+    rect.left = std::clamp(left, 0, imgW - rect.w);
+    rect.top = std::clamp(top, 0, imgH - rect.h);
+    return rect;
+}
+
 std::optional<ImageDocument> CropImage(const ImageDocument& doc,
                                         int left, int top, int right, int bottom) {
     left = std::clamp(left, 0, doc.width);
