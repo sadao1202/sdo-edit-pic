@@ -21,6 +21,7 @@
 #include "image_codec.hpp"
 #include "image_io.hpp"
 #include "image_ops.hpp"
+#include "path_utils.hpp"
 
 namespace {
 
@@ -51,17 +52,6 @@ std::wstring GetLowerExtension(const std::wstring& path) {
     std::transform(ext.begin(), ext.end(), ext.begin(),
                     [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
     return ext;
-}
-
-// ディレクトリ・拡張子を除いたファイル名部分を返す。
-std::wstring GetBaseNameWithoutExtension(const std::wstring& path) {
-    size_t start = path.find_last_of(L"/\\");
-    start = (start == std::wstring::npos) ? 0 : start + 1;
-    size_t dotPos = path.find_last_of(L'.');
-    if (dotPos == std::wstring::npos || dotPos < start) {
-        return path.substr(start);
-    }
-    return path.substr(start, dotPos - start);
 }
 
 // ファイル名部分のみ（拡張子含む）を返す。
@@ -318,9 +308,12 @@ void App::OnSaveClicked() {
         return;
     }
 
-    const auto dataDirectory = app_paths::GetDataDirectory();
-    const std::wstring initialDirectory = dataDirectory.value_or(L"");
-    const std::wstring initialBaseName = GetBaseNameWithoutExtension(selectedPath_);
+    // 初期フォルダは元画像のフォルダ。取れなければアプリのデータディレクトリ。
+    std::wstring initialDirectory = path_utils::GetDirectoryName(selectedPath_);
+    if (initialDirectory.empty()) {
+        initialDirectory = app_paths::GetDataDirectory().value_or(L"");
+    }
+    const std::wstring initialBaseName = path_utils::MakeDefaultSaveBaseName(selectedPath_);
 
     auto outputPathOpt = file_dialog::SaveFileDialog(initialDirectory, initialBaseName);
     if (!outputPathOpt.has_value()) {
