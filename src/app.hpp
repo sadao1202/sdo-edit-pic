@@ -19,7 +19,7 @@ private:
         Idle,        // 通常表示
         Cropping,    // ドラッグ中〜矩形確定前
         CropPreview, // ドラッグ確定後、保存/戻る待ち
-        CropFixed,   // サイズ指定トリミング（固定サイズ枠を移動、適用/キャンセル待ち）
+        CropFixed,   // サイズ指定/画面比率トリミング（固定サイズ枠を移動、適用/キャンセル待ち）
         Mosaic,      // モザイクモード（ストロークで塗り、適用/キャンセル待ち）
     };
 
@@ -33,6 +33,9 @@ private:
     // 方式セレクタで「サイズ指定」が選ばれたとき、固定サイズ枠を画像中央に置いて入る。
     void EnterCropFixed();
     // 方式セレクタで「自由選択」に戻されたとき、サイズ指定モードを抜けてIdleに戻る。
+    void EnterCropAspect();
+    // 画面比率モードで幅wの枠に更新する（高さは比率から算出）。(cx, cy)を中心に維持して画像内に収める。
+    void SetCropAspectWidth(int w, double cx, double cy);
     void ExitCropFixed();
     // 直前の1ストロークをmosaicMaskHistory_から復元して取り消す。
     void OnMosaicUndoStrokeClicked();
@@ -84,7 +87,8 @@ private:
     int selRectBottom_ = 0;
 
     bool cropMenuOpen_ = false;  // 「トリミング」ボタンで方式セレクタを表示中か
-    int cropMethod_ = 0;         // 0=自由選択, 1=サイズ指定
+    int cropMethod_ = 0;         // 0=自由選択, 1=サイズ指定, 2=画面比率
+    int cropAspectIdx_ = 1;      // 画面比率モードで選択中の比率（kCropAspects のindex。初期4:3）
     // サイズ指定トリミングの枠（画像px）。W/Hは次回突入時の初期値としても使う（0=未設定）。
     int cropFixedW_ = 0;
     int cropFixedH_ = 0;

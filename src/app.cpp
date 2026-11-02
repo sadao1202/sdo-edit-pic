@@ -26,6 +26,18 @@ namespace {
 
 constexpr int kDefaultJpegQuality = 100;
 
+// 画面比率トリミングで選べる比率（横長→縦長の順）。
+struct CropAspect {
+    const char* label;
+    int rw;
+    int rh;
+};
+constexpr CropAspect kCropAspects[] = {
+    {"1:1", 1, 1},  {"4:3", 4, 3},  {"3:2", 3, 2},  {"16:9", 16, 9}, {"21:9", 21, 9},
+    {"3:4", 3, 4},  {"2:3", 2, 3},  {"9:16", 9, 16}, {"9:21", 9, 21},
+};
+constexpr int kCropAspectCount = static_cast<int>(sizeof(kCropAspects) / sizeof(kCropAspects[0]));
+
 // パスの拡張子を小文字化して返す（ドットなし）。
 // ファイル名部分（ディレクトリ区切り以降）に限定してドットを探す。
 std::wstring GetLowerExtension(const std::wstring& path) {
@@ -200,8 +212,13 @@ void App::OnMosaicClicked() {
 
 // Idle かつ document_ があるときに呼ばれる。枠サイズは前回値（未設定なら画像の50%）を
 // 画像内に丸めたうえで、画像中央に配置する。
+// CropFixed中（画面比率からの切替）は現在の枠をそのまま使い、高さを編集可能に戻すだけ。
 void App::EnterCropFixed() {
-    if (!document_.has_value() || mode_ != Mode::Idle) {
+    if (!document_.has_value() || (mode_ != Mode::Idle && mode_ != Mode::CropFixed)) {
+        return;
+    }
+    if (mode_ == Mode::CropFixed) {
+        cropMethod_ = 1;
         return;
     }
     const int w = cropFixedW_ > 0 ? cropFixedW_ : document_->width / 2;
@@ -217,6 +234,43 @@ void App::EnterCropFixed() {
     cropMethod_ = 1;
     mode_ = Mode::CropFixed;
     ResetImageDisplayCache();
+}
+
+// Idleからは比率で収まる最大枠を中央に配置する。CropFixed中（サイズ指定から切替）は
+// 枠の中心と現在の幅を維持できる範囲で新しい比率に合わせる。
+void App::EnterCropAspect() {
+    if (!document_.has_value() || (mode_ != Mode::Idle && mode_ != Mode::CropFixed)) {
+        return;
+    }
+    if (mode_ == Mode::CropFixed) {
+        SetCropAspectWidth(cropFixedW_, cropFixedLeft_ + cropFixedW_ / 2.0, cropFixedTop_ + cropFixedH_ / 2.0);
+        cropMethod_ = 2;
+        return;
+    }
+    const auto& aspect = kCropAspects[cropAspectIdx_];
+    const auto rect = image_ops::MaxAspectRect(document_->width, document_->height, aspect.rw, aspect.rh);
+    cropFixedW_ = rect.w;
+    cropFixedH_ = rect.h;
+    cropFixedLeft_ = rect.left;
+    cropFixedTop_ = rect.top;
+    cropFixedDragging_ = false;
+    cropMethod_ = 2;
+    mode_ = Mode::CropFixed;
+    ResetImageDisplayCache();
+}
+
+void App::SetCropAspectWidth(int w, double cx, double cy) {
+    const auto& aspect = kCropAspects[cropAspectIdx_];
+    // 幅・高さを先に確定させてから、中心を維持する位置を求める。
+    const auto sized = image_ops::ClampAspectRect(document_->width, document_->height, aspect.rw, aspect.rh,
+                                                   w, 0, 0);
+    const auto rect = image_ops::ClampAspectRect(
+        document_->width, document_->height, aspect.rw, aspect.rh, sized.w,
+        static_cast<int>(std::round(cx - sized.w / 2.0)), static_cast<int>(std::round(cy - sized.h / 2.0)));
+    cropFixedW_ = rect.w;
+    cropFixedH_ = rect.h;
+    cropFixedLeft_ = rect.left;
+    cropFixedTop_ = rect.top;
 }
 
 void App::ExitCropFixed() {
@@ -733,9 +787,36 @@ void App::OnFrame() {
             if (ImGui::RadioButton("サイズ指定", cropMethod_ == 1)) {
                 EnterCropFixed();
             }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("画面比率", cropMethod_ == 2)) {
+                EnterCropAspect();
+            }
             ImGui::EndDisabled();
         }
-        if (showCropFixedRow) {
+        if (showCropFixedRow && cropMethod_ == 2) {
+            // 画面比率: 比率コンボ＋幅入力。高さは比率から算出する表示のみ。
+            const double cx = cropFixedLeft_ + cropFixedW_ / 2.0;
+            const double cy = cropFixedTop_ + cropFixedH_ / 2.0;
+            ImGui::SetNextItemWidth(100.0f);
+            if (ImGui::BeginCombo("比率", kCropAspects[cropAspectIdx_].label)) {
+                for (int i = 0; i < kCropAspectCount; ++i) {
+                    if (ImGui::Selectable(kCropAspects[i].label, i == cropAspectIdx_)) {
+                        cropAspectIdx_ = i;
+                        SetCropAspectWidth(cropFixedW_, cx, cy);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            const int oldW = cropFixedW_;
+            ImGui::SetNextItemWidth(140.0f);
+            ImGui::InputInt("幅(px)", &cropFixedW_);
+            if (cropFixedW_ != oldW) {
+                SetCropAspectWidth(cropFixedW_, cx, cy);
+            }
+            ImGui::SameLine();
+            ImGui::Text("高さ: %d px", cropFixedH_);
+        } else if (showCropFixedRow) {
             const int oldW = cropFixedW_;
             const int oldH = cropFixedH_;
             ImGui::SetNextItemWidth(140.0f);
