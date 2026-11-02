@@ -47,8 +47,9 @@ cmake --build build -j
 
 ## 未解決の課題
 
-- 現状ファイルダイアログのフィルタはpng/jpgをまとめた単一グループで、拡張子選択によるフォーマット指定はできない（拡張子明示入力のみ）
-- image_io / gl_texture のロジックに対する自動テストは未整備
+課題・TODOはGitHub issueで管理する。
+- ファイルダイアログの拡張子フィルタ: https://github.com/sadao1202/sdo-edit-pic/issues/5
+- image_io / gl_texture の自動テスト未整備: https://github.com/sadao1202/sdo-edit-pic/issues/6
 
 ## リリース手順
 
