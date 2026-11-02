@@ -19,6 +19,7 @@ private:
         Idle,        // 通常表示
         Cropping,    // ドラッグ中〜矩形確定前
         CropPreview, // ドラッグ確定後、保存/戻る待ち
+        CropFixed,   // サイズ指定トリミング（固定サイズ枠を移動、適用/キャンセル待ち）
         Mosaic,      // モザイクモード（ストロークで塗り、適用/キャンセル待ち）
     };
 
@@ -29,6 +30,10 @@ private:
     void OnUndoClicked();
     void OnRevertToOriginalClicked();
     void OnMosaicClicked();
+    // 方式セレクタで「サイズ指定」が選ばれたとき、固定サイズ枠を画像中央に置いて入る。
+    void EnterCropFixed();
+    // 方式セレクタで「自由選択」に戻されたとき、サイズ指定モードを抜けてIdleに戻る。
+    void ExitCropFixed();
     // 直前の1ストロークをmosaicMaskHistory_から復元して取り消す。
     void OnMosaicUndoStrokeClicked();
     // モード共通の「適用」処理。previousDocument_へ現状のdocument_を退避したうえで、
@@ -77,6 +82,16 @@ private:
     int selRectTop_ = 0;
     int selRectRight_ = 0;
     int selRectBottom_ = 0;
+
+    bool cropMenuOpen_ = false;  // 「トリミング」ボタンで方式セレクタを表示中か
+    int cropMethod_ = 0;         // 0=自由選択, 1=サイズ指定
+    // サイズ指定トリミングの枠（画像px）。W/Hは次回突入時の初期値としても使う（0=未設定）。
+    int cropFixedW_ = 0;
+    int cropFixedH_ = 0;
+    int cropFixedLeft_ = 0;
+    int cropFixedTop_ = 0;
+    bool cropFixedDragging_ = false;
+    ImVec2 cropFixedGrabOffset_{};  // ドラッグ開始時の「マウス位置 - 枠左上」（画像px）
 
     std::vector<unsigned char> mosaicMask_;  // document_と同サイズ。Mosaic中のみ有効
     // モザイクの各ストローク開始直前のmosaicMask_スナップショット（上限なし）。
