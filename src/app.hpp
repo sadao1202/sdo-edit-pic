@@ -16,7 +16,8 @@ public:
 
 private:
     enum class Mode {
-        Idle,        // 通常表示
+        Idle,        // 項目選択画面（トリミング/モザイクのボタンを表示。画像上のドラッグは無効）
+        CropFree,    // 自由選択トリミングの待機（ここでのみドラッグで範囲選択を開始できる）
         Cropping,    // ドラッグ中〜矩形確定前
         CropPreview, // ドラッグ確定後、保存/戻る待ち
         CropFixed,   // サイズ指定/画面比率トリミング（固定サイズ枠を移動、適用/キャンセル待ち）
@@ -30,12 +31,18 @@ private:
     void OnUndoClicked();
     void OnRevertToOriginalClicked();
     void OnMosaicClicked();
+    // 項目選択画面の「トリミング」押下。自由選択の待機（CropFree）に入る。
+    void OnCropClicked();
+    // 編集系の状態（mode_・プレビュー・トリミング枠・モザイクマスク・表示キャッシュ）を
+    // すべて初期化してIdleに戻す。適用/キャンセル/画像を開く/モード突入から呼ぶ。
+    void ResetEditUiState();
     // 方式セレクタで「サイズ指定」が選ばれたとき、固定サイズ枠を画像中央に置いて入る。
     void EnterCropFixed();
-    // 方式セレクタで「自由選択」に戻されたとき、サイズ指定モードを抜けてIdleに戻る。
+    // 方式セレクタで「画面比率」が選ばれたとき、比率の枠に入る（CropFreeまたはCropFixedから）。
     void EnterCropAspect();
     // 画面比率モードで幅wの枠に更新する（高さは比率から算出）。(cx, cy)を中心に維持して画像内に収める。
     void SetCropAspectWidth(int w, double cx, double cy);
+    // 方式セレクタで「自由選択」に戻されたとき、サイズ指定/画面比率を抜けてCropFreeに戻る。
     void ExitCropFixed();
     // 直前の1ストロークをmosaicMaskHistory_から復元して取り消す。
     void OnMosaicUndoStrokeClicked();
@@ -86,7 +93,6 @@ private:
     int selRectRight_ = 0;
     int selRectBottom_ = 0;
 
-    bool cropMenuOpen_ = false;  // 「トリミング」ボタンで方式セレクタを表示中か
     int cropMethod_ = 0;         // 0=自由選択, 1=サイズ指定, 2=画面比率
     int cropAspectIdx_ = 1;      // 画面比率モードで選択中の比率（kCropAspects のindex。初期4:3）
     // サイズ指定トリミングの枠（画像px）。W/Hは次回突入時の初期値としても使う（0=未設定）。

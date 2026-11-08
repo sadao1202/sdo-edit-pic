@@ -102,22 +102,28 @@ void App::OnOpenClicked() {
     originalDocument_ = *document_;
     previousDocument_.reset();
     appliedEditCount_ = 0;
-    // 念のため、残っているクロッププレビュー状態をクリアしておく
+    // 残っている編集系の状態をすべてクリアしておく
     // （通常はIdle時のみ画像を開けるため発生しないはず）。
+    ResetEditUiState();
+    statusMessage_.clear();
+    statusIsError_ = false;
+}
+
+// 編集系の状態を一括で初期化してIdleに戻す。リセット漏れを防ぐため、状態を持つ変数を
+// 増やしたらここに追加すること。表示位置・サイズのキャッシュは、画像切り替えやfooter構成の
+// 変化の直後に古い値を使わないよう無効化する。
+void App::ResetEditUiState() {
     previewDocument_.reset();
     previewTexture_.Release();
     mode_ = Mode::Idle;
-    cropMenuOpen_ = false;
     cropMethod_ = 0;
     cropFixedDragging_ = false;
+    // モザイクのモード離脱時はマスクを必ず解放する（次回モード突入時にサイズを取り直す）。
     mosaicMask_.clear();
     std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
     mosaicStrokeActive_ = false;
     mosaicMaskDirty_ = false;
     mosaicStrokePoints_.clear();
-    statusMessage_.clear();
-    statusIsError_ = false;
-    // 新しい画像に切り替わったため、前の画像の表示位置・サイズのキャッシュは無効化する。
     ResetImageDisplayCache();
 }
 
@@ -128,21 +134,8 @@ void App::ApplyEditedDocument(ImageDocument&& edited) {
     previousDocument_ = std::move(*document_);
     document_ = std::move(edited);
     texture_.Upload(document_->pixels.data(), document_->width, document_->height);
-    previewDocument_.reset();
-    previewTexture_.Release();
     ++appliedEditCount_;
-    mode_ = Mode::Idle;
-    cropMenuOpen_ = false;
-    cropMethod_ = 0;
-    cropFixedDragging_ = false;
-    // モザイクのモード離脱時はマスクを必ず解放する（次回モード突入時にサイズを取り直す）。
-    mosaicMask_.clear();
-    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
-    mosaicStrokeActive_ = false;
-    mosaicMaskDirty_ = false;
-    mosaicStrokePoints_.clear();
-    // footer構成が変わるため、前フレームのキャッシュを無効化する。
-    ResetImageDisplayCache();
+    ResetEditUiState();
     statusMessage_ = wasMosaic ? "モザイクを適用しました" : "トリミングを適用しました";
     statusIsError_ = false;
 }
@@ -165,20 +158,16 @@ void App::OnApplyClicked() {
 }
 
 void App::OnCancelEditClicked() {
-    previewDocument_.reset();
-    previewTexture_.Release();
-    mode_ = Mode::Idle;
-    cropMenuOpen_ = false;
-    cropMethod_ = 0;
-    cropFixedDragging_ = false;
-    mosaicMask_.clear();
-    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
-    mosaicStrokeActive_ = false;
-    mosaicMaskDirty_ = false;
-    mosaicStrokePoints_.clear();
-    // CropPreview/CropFixed/Mosaic中はfooter構成が異なりレイアウトが変わるため、
-    // Idleに戻った直後のフレームに古いキャッシュを使わないよう無効化する。
-    ResetImageDisplayCache();
+    ResetEditUiState();
+}
+
+// Idle かつ document_ があるときに呼ばれる。自由選択トリミングの待機に入る。
+void App::OnCropClicked() {
+    if (!document_.has_value() || mode_ != Mode::Idle) {
+        return;
+    }
+    ResetEditUiState();
+    mode_ = Mode::CropFree;
 }
 
 // Idle かつ document_ があるときに呼ばれる。モザイクモードに入り、
@@ -187,24 +176,18 @@ void App::OnMosaicClicked() {
     if (!document_.has_value() || mode_ != Mode::Idle) {
         return;
     }
+    ResetEditUiState();
     mosaicMask_.assign(static_cast<size_t>(document_->width) * static_cast<size_t>(document_->height), 0);
-    std::vector<std::vector<unsigned char>>().swap(mosaicMaskHistory_);
-    mosaicMaskDirty_ = false;
-    mosaicStrokeActive_ = false;
-    mosaicStrokePoints_.clear();
     previewDocument_ = *document_;
     previewTexture_.Upload(previewDocument_->pixels.data(), previewDocument_->width, previewDocument_->height);
     mode_ = Mode::Mosaic;
-    cropMenuOpen_ = false;
-    cropMethod_ = 0;
-    ResetImageDisplayCache();
 }
 
-// Idle かつ document_ があるときに呼ばれる。枠サイズは前回値（未設定なら画像の50%）を
+// CropFree/CropFixed で document_ があるときに呼ばれる。枠サイズは前回値（未設定なら画像の50%）を
 // 画像内に丸めたうえで、画像中央に配置する。
 // CropFixed中（画面比率からの切替）は現在の枠をそのまま使い、高さを編集可能に戻すだけ。
 void App::EnterCropFixed() {
-    if (!document_.has_value() || (mode_ != Mode::Idle && mode_ != Mode::CropFixed)) {
+    if (!document_.has_value() || (mode_ != Mode::CropFree && mode_ != Mode::CropFixed)) {
         return;
     }
     if (mode_ == Mode::CropFixed) {
@@ -226,10 +209,10 @@ void App::EnterCropFixed() {
     ResetImageDisplayCache();
 }
 
-// Idleからは比率で収まる最大枠を中央に配置する。CropFixed中（サイズ指定から切替）は
+// CropFreeからは比率で収まる最大枠を中央に配置する。CropFixed中（サイズ指定から切替）は
 // 枠の中心と現在の幅を維持できる範囲で新しい比率に合わせる。
 void App::EnterCropAspect() {
-    if (!document_.has_value() || (mode_ != Mode::Idle && mode_ != Mode::CropFixed)) {
+    if (!document_.has_value() || (mode_ != Mode::CropFree && mode_ != Mode::CropFixed)) {
         return;
     }
     if (mode_ == Mode::CropFixed) {
@@ -267,7 +250,7 @@ void App::ExitCropFixed() {
     if (mode_ != Mode::CropFixed) {
         return;
     }
-    mode_ = Mode::Idle;
+    mode_ = Mode::CropFree;
     cropMethod_ = 0;
     cropFixedDragging_ = false;
     ResetImageDisplayCache();
@@ -411,7 +394,7 @@ void App::UpdateCropInputState() {
                               mousePos.y >= lastImageScreenPos_.y &&
                               mousePos.y <= lastImageScreenPos_.y + safeDisplayHeight;
 
-    if (mode_ == Mode::Idle && insideImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (mode_ == Mode::CropFree && insideImage && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         dragStartImagePx_ = screenToImagePx(mousePos);
         dragCurrentImagePx_ = dragStartImagePx_;
         mode_ = Mode::Cropping;
@@ -434,8 +417,8 @@ void App::UpdateCropInputState() {
 
             auto cropped = image_ops::CropImage(*document_, left, top, right, bottom);
             if (!cropped.has_value()) {
-                // 退化選択（移動量ゼロなど）は誤クリック救済のため無視する。
-                mode_ = Mode::Idle;
+                // 退化選択（移動量ゼロなど）は誤クリック救済のため無視し、待機に戻る。
+                mode_ = Mode::CropFree;
                 previewDocument_.reset();
                 previewTexture_.Release();
             } else {
@@ -657,22 +640,16 @@ void App::OnFrame() {
         OnOpenClicked();
     }
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!document_.has_value() || mode_ != Mode::Idle);
-    if (ImGui::Button("モザイク")) {
-        OnMosaicClicked();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!document_.has_value() || mode_ != Mode::Idle);
-    if (ImGui::Button("トリミング")) {
-        cropMenuOpen_ = true;
-    }
-    ImGui::EndDisabled();
 
+    bool cropClicked = false;
+    bool mosaicClicked = false;
     if (document_.has_value()) {
-        // footer高さ見積もりと同じ判定にするため、方式セレクタ操作によるmode_変更前に控える。
+        // footer高さ見積もりと同じ判定にするため、ボタン/方式セレクタ操作によるmode_変更前に控える。
+        // （項目ボタンの処理もフレーム末尾に回し、同一フレーム内で構成が食い違わないようにする。）
         const bool showCropFixedRow = (mode_ == Mode::CropFixed);
+        const int frameCropMethod = cropMethod_;
+        const bool showCropRadio = (mode_ == Mode::CropFree || mode_ == Mode::Cropping ||
+                                    mode_ == Mode::CropPreview || mode_ == Mode::CropFixed);
         ImGui::Text("選択中: %s", WStringToUtf8(GetFileName(selectedPath_)).c_str());
         ImGui::Text("%d x %d", document_->width, document_->height);
 
@@ -699,15 +676,19 @@ void App::OnFrame() {
             // 前フレームの実測値には頼らない（UI構成が変わるフレームでのガタつきを防ぐため）。
             float footerHeight = 0.0f;
             // [1] 案内テキスト/選択範囲サイズテキスト（Cropping中は非表示）。
+            // Idleは案内＋[トリミング][モザイク]ボタン行。
             // Mosaic中は案内1行＋スライダー2行分を見積もる（漏らすと縦スクロールが再発する）。
-            if (mode_ == Mode::Idle || mode_ == Mode::CropPreview || mode_ == Mode::CropFixed) {
+            if (mode_ == Mode::Idle) {
+                footerHeight += ImGui::GetTextLineHeightWithSpacing();
+                footerHeight += ImGui::GetFrameHeightWithSpacing();
+            } else if (mode_ == Mode::CropFree || mode_ == Mode::CropPreview || mode_ == Mode::CropFixed) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
             } else if (mode_ == Mode::Mosaic) {
                 footerHeight += ImGui::GetTextLineHeightWithSpacing();
                 footerHeight += ImGui::GetFrameHeightWithSpacing() * 2.0f;
             }
-            // [2] トリミング方式セレクタ行（Mosaic以外で表示）と、サイズ指定時のW/H入力行
-            if (cropMenuOpen_ && mode_ != Mode::Mosaic) {
+            // [2] トリミング方式セレクタ行（トリミング系モードで表示）と、サイズ指定時のW/H入力行
+            if (showCropRadio) {
                 footerHeight += ImGui::GetFrameHeightWithSpacing();
             }
             if (mode_ == Mode::CropFixed) {
@@ -753,7 +734,16 @@ void App::OnFrame() {
         }
 
         if (mode_ == Mode::Idle) {
-            ImGui::TextDisabled("ドラッグして範囲を選択するとトリミングできます");
+            ImGui::Text("修正したい項目をえらんでください");
+            if (ImGui::Button("トリミング")) {
+                cropClicked = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("モザイク")) {
+                mosaicClicked = true;
+            }
+        } else if (mode_ == Mode::CropFree) {
+            ImGui::TextDisabled("ドラッグして範囲を選択してください");
         } else if (mode_ == Mode::CropPreview) {
             ImGui::Text("選択範囲: %d x %d px", selRectRight_ - selRectLeft_, selRectBottom_ - selRectTop_);
         } else if (mode_ == Mode::CropFixed) {
@@ -769,10 +759,10 @@ void App::OnFrame() {
             mosaicBrushDiameter_ = std::clamp(mosaicBrushDiameter_, 4, 200);
         }
 
-        // [2] トリミング方式セレクタ。Idle/CropFixed以外（ドラッグ中・プレビュー中）は
+        // [2] トリミング方式セレクタ。CropFree/CropFixed以外（ドラッグ中・プレビュー中）は
         // レイアウト維持のため表示のみで操作不可にする。
-        if (cropMenuOpen_ && mode_ != Mode::Mosaic) {
-            ImGui::BeginDisabled(mode_ != Mode::Idle && mode_ != Mode::CropFixed);
+        if (showCropRadio) {
+            ImGui::BeginDisabled(mode_ != Mode::CropFree && mode_ != Mode::CropFixed);
             if (ImGui::RadioButton("自由選択", cropMethod_ == 0)) {
                 ExitCropFixed();
             }
@@ -786,7 +776,7 @@ void App::OnFrame() {
             }
             ImGui::EndDisabled();
         }
-        if (showCropFixedRow && cropMethod_ == 2) {
+        if (showCropFixedRow && frameCropMethod == 2) {
             // 画面比率: 比率コンボ＋幅入力。高さは比率から算出する表示のみ。
             const double cx = cropFixedLeft_ + cropFixedW_ / 2.0;
             const double cy = cropFixedTop_ + cropFixedH_ / 2.0;
@@ -885,6 +875,13 @@ void App::OnFrame() {
     if (!statusMessage_.empty()) {
         ImGui::TextColored(statusIsError_ ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
                             "%s", statusMessage_.c_str());
+    }
+
+    // 項目ボタンの処理は、このフレームの描画（footer構成）が済んでから行う。
+    if (cropClicked) {
+        OnCropClicked();
+    } else if (mosaicClicked) {
+        OnMosaicClicked();
     }
 
     ImGui::End();
