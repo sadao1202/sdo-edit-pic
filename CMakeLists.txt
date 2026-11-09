@@ -73,6 +73,7 @@ if(SDO_BUILD_APP)
     src/main.cpp
     src/app.cpp
     src/app_paths.cpp
+    src/path_utils.cpp
     src/image_document.cpp
     src/image_io.cpp
     src/image_codec.cpp
@@ -130,3 +131,12 @@ add_executable(image_codec_tests
 target_include_directories(image_codec_tests PRIVATE src third_party/stb)
 
 add_test(NAME image_codec_tests COMMAND image_codec_tests)
+
+# path_utils（保存ダイアログの既定名・初期フォルダ算出、Win32非依存）の自動テスト。
+add_executable(path_utils_tests
+  src/path_utils.cpp
+  tests/path_utils_tests.cpp
+)
+target_include_directories(path_utils_tests PRIVATE src)
+
+add_test(NAME path_utils_tests COMMAND path_utils_tests)

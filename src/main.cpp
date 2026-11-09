@@ -80,6 +80,9 @@ int main() {
         return 1;
     }
 
+    // 固定幅の操作パネルを確保したうえで画像エリアが潰れないよう、最小サイズを設ける。
+    glfwSetWindowSizeLimits(window, 640, 480, GLFW_DONT_CARE, GLFW_DONT_CARE);
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 

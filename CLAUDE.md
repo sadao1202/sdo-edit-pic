@@ -36,16 +36,27 @@ cmake -S . -B build -G Ninja \
 cmake --build build -j
 ```
 
-依存DLL確認: `x86_64-w64-mingw32-objdump -p build/sdo_edit_pic.exe | grep "DLL Name"`
+依存DLL確認: `x86_64-w64-mingw32-objdump -p build/画像編集.exe | grep "DLL Name"`
+
+- 成果物（exe・テスト用バイナリ等）のビルド出力先は必ずPJ内の`build/`にする。scratchpad・`/tmp`・`/mnt/c`など PJ ディレクトリ外にビルド成果物を置かない（Windows側へのコピーはユーザーが行う）。
+- テスト用の別構成ビルド（Debug等）が必要な場合も、PJ内（`build/`配下のサブディレクトリ等。`build/`はgitignore済み）に作る。
 
 ## 前提・注意事項
 
 - ファイルパスは日本語・空白を含む可能性があるため、`stbi_load`/`stbi_write_*`は直接パスを渡さず、`_wfopen`で開いた`FILE*`経由（`stbi_load_from_file`/`stbi_write_*_to_func`）で扱うこと
 - `imgui_impl_opengl3.cpp`は`IMGUI_IMPL_OPENGL_LOADER_CUSTOM`定義時にGLヘッダをincludeしないため、CMake側で`-include glad/gl.h`を強制インクルードしている（`CMakeLists.txt`参照）
 - GUI操作を伴うE2E試験はWSL上では実施できない。画像I/Oロジック等GUI非依存部分は分離してテスト可能な構造を保つこと
-- アプリが書き込むファイル（`imgui.ini`、変換・トリミング後の画像）は exe と同じディレクトリではなく、`%APPDATA%\sdo-edit-pic\`（`src/app_paths.hpp`/`src/app_paths.cpp`で算出）に保存する
+- アプリが書き込むファイル（`imgui.ini`、変換・トリミング後の画像）は exe と同じディレクトリではなく、`%APPDATA%\sdo-edit-pic\`（`src/app_paths.hpp`/`src/app_paths.cpp`で算出）に保存する。ただし保存ダイアログの初期フォルダは元画像のフォルダ（取得できない場合のみ`%APPDATA%\sdo-edit-pic\`）、既定名は`<元名>_cropped`
 
 ## 未解決の課題
 
-- 現状ファイルダイアログのフィルタはpng/jpgをまとめた単一グループで、拡張子選択によるフォーマット指定はできない（拡張子明示入力のみ）
-- image_io / gl_texture のロジックに対する自動テストは未整備
+課題・TODOはGitHub issueで管理する。
+- ファイルダイアログの拡張子フィルタ: https://github.com/sadao1202/sdo-edit-pic/issues/5
+- image_io / gl_texture の自動テスト未整備: https://github.com/sadao1202/sdo-edit-pic/issues/6
+
+## リリース手順
+
+- 機能追加PRのマージ後に、GitHub release を作成する（作成前に必ずユーザーに確認する）。
+- タグは既存と同じ `vX.Y.Z` 形式。機能追加はminor更新（例: v0.2.0 → v0.3.0）を想定。
+- タイトルは `vX.Y.Z - 機能概要`。
+- ビルドしたexeを添付する（`gh release create`）。
