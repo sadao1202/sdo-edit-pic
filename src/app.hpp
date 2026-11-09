@@ -49,19 +49,17 @@ private:
     // モード共通の「適用」処理。previousDocument_へ現状のdocument_を退避したうえで、
     // editedをstd::moveでdocument_へ反映する（コピーを発生させない）。
     void ApplyEditedDocument(ImageDocument&& edited);
-    // 表示位置・サイズのキャッシュ（lastImageScreenPos_/lastDisplaySize_）と
     // ドラッグ座標を無効化する。画像切り替え時やクロップ操作終了時に呼び出す。
     void ResetImageDisplayCache();
-    // マウス入力を処理しmode_/ドラッグ座標を更新する。座標変換には前フレームで
-    // キャッシュした表示位置・サイズ（lastImageScreenPos_/lastDisplaySize_）を使うため、
-    // このフレームのレイアウト計算（footer高さ見積もり等）より前に呼び出せる。
-    void UpdateCropInputState();
+    // マウス入力を処理しmode_/ドラッグ座標を更新する。座標変換には、このフレーム冒頭に
+    // 画像エリアの大きさと画像寸法から算出した画像矩形（imageScreenPos/displaySize）を使う。
+    void UpdateCropInputState(const ImVec2& imageScreenPos, const ImVec2& displaySize);
     // マウス入力を処理しmosaicMask_を更新する（UpdateCropInputStateと同形）。
     // ドラッグ中はマスクとオーバーレイ表示のみを更新し、離した時点で1回だけ
     // document_からpreviewDocument_を作り直してApplyMosaicを実行する。
-    void UpdateMosaicInputState();
+    void UpdateMosaicInputState(const ImVec2& imageScreenPos, const ImVec2& displaySize);
     // 選択範囲のオーバーレイ描画とホバー領域(InvisibleButton)の配置を行う。
-    // このフレームで確定したimageScreenPos/displaySizeを使う。
+    // このフレームで算出したimageScreenPos/displaySizeを使う。
     void DrawCropOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySize);
     // モザイクのブラシ軌跡・カーソルのオーバーレイ描画とホバー領域の配置を行う。
     void DrawMosaicOverlay(const ImVec2& imageScreenPos, const ImVec2& displaySize);
@@ -84,10 +82,6 @@ private:
     Mode mode_ = Mode::Idle;
     ImVec2 dragStartImagePx_{};
     ImVec2 dragCurrentImagePx_{};
-    // 前フレームでImGui::Image描画に使った表示位置・サイズ。
-    // UpdateCropInputStateでの画面座標→画像ピクセル座標変換の基準に使う。
-    ImVec2 lastImageScreenPos_{};
-    ImVec2 lastDisplaySize_{};
     int selRectLeft_ = 0;
     int selRectTop_ = 0;
     int selRectRight_ = 0;
