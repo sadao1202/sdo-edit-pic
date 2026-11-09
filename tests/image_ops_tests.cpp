@@ -5,6 +5,7 @@
 // （コメント中の番号は同ドキュメントの正常系1-7・異常系8-12・境界値13-17）。
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -631,6 +632,36 @@ void Test_AspectRect_AlwaysInsideImage() {
 
 }  // namespace
 
+void Test_FitSize_ShrinksKeepingAspect() {
+    auto r = image_ops::FitSize(400.0f, 400.0f, 800.0f, 200.0f);
+    assert(r.w == 400.0f && r.h == 100.0f);
+    r = image_ops::FitSize(400.0f, 100.0f, 200.0f, 800.0f);
+    assert(r.w == 25.0f && r.h == 100.0f);
+}
+
+void Test_FitSize_NoUpscale() {
+    auto r = image_ops::FitSize(1000.0f, 1000.0f, 100.0f, 50.0f);
+    assert(r.w == 100.0f && r.h == 50.0f);
+    r = image_ops::FitSize(1000.0f, 1000.0f, 100.0f, 50.0f, 2.0f);
+    assert(r.w == 200.0f && r.h == 100.0f);
+}
+
+void Test_FitSize_ZeroOrNegativeReturnsZero() {
+    auto r = image_ops::FitSize(0.0f, 100.0f, 10.0f, 10.0f);
+    assert(r.w == 0.0f && r.h == 0.0f);
+    r = image_ops::FitSize(-5.0f, 100.0f, 10.0f, 10.0f);
+    assert(r.w == 0.0f && r.h == 0.0f);
+    r = image_ops::FitSize(100.0f, 100.0f, 0.0f, 10.0f);
+    assert(r.w == 0.0f && r.h == 0.0f);
+}
+
+void Test_FitSize_OnePixelAndExtremeAspect() {
+    auto r = image_ops::FitSize(500.0f, 500.0f, 1.0f, 1.0f);
+    assert(r.w == 1.0f && r.h == 1.0f);
+    r = image_ops::FitSize(100.0f, 100.0f, 10000.0f, 1.0f);
+    assert(std::fabs(r.w - 100.0f) < 1e-3f && std::fabs(r.h - 0.01f) < 1e-5f);
+}
+
 int main() {
     Test_ApplyMosaic_SolidColorUnchanged();
     Test_ApplyMosaic_CheckerboardAverages();
@@ -679,6 +710,11 @@ int main() {
     Test_ClampAspectRect_PositionClamped();
     Test_ClampAspectRect_InvalidArgsReturnZero();
     Test_AspectRect_AlwaysInsideImage();
+
+    Test_FitSize_ShrinksKeepingAspect();
+    Test_FitSize_NoUpscale();
+    Test_FitSize_ZeroOrNegativeReturnsZero();
+    Test_FitSize_OnePixelAndExtremeAspect();
 
     std::printf("All image_ops tests passed.\n");
     return 0;

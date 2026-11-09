@@ -210,4 +210,12 @@ void PaintBrushLine(std::vector<unsigned char>& mask, int width, int height,
     }
 }
 
+FitResult FitSize(float areaW, float areaH, float imgW, float imgH, float maxScale) {
+    if (areaW <= 0.0f || areaH <= 0.0f || imgW <= 0.0f || imgH <= 0.0f || maxScale <= 0.0f) {
+        return FitResult{};
+    }
+    const float scale = std::min({areaW / imgW, areaH / imgH, maxScale});
+    return FitResult{imgW * scale, imgH * scale};
+}
+
 }  // namespace image_ops

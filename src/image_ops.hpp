@@ -33,6 +33,14 @@ FixedRect MaxAspectRect(int imgW, int imgH, int ratioW, int ratioH);
 // 枠が画像内に収まるようleft/topをクランプして返す。無効な引数のときは全て0の FixedRect を返す。
 FixedRect ClampAspectRect(int imgW, int imgH, int ratioW, int ratioH, int w, int left, int top);
 
+// 画像エリア(areaW x areaH)に画像(imgW x imgH)を縦横比を保って収める表示サイズ。
+// 拡大倍率は maxScale（既定1.0=拡大しない）まで。いずれかが0以下なら {0, 0}。
+struct FitResult {
+    float w = 0.0f;
+    float h = 0.0f;
+};
+FitResult FitSize(float areaW, float areaH, float imgW, float imgH, float maxScale = 1.0f);
+
 // maskは doc.width*doc.height の1バイト/画素。非0の画素が「モザイク対象」。
 // blockSize x blockSize の固定グリッド（画像原点(0,0)基準）で、対象画素を1つ以上
 // 含むブロックをそのブロック内RGB平均色で塗りつぶす。アルファは変更しない。
